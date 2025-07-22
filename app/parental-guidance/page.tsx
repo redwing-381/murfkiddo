@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Shield, Eye, Volume2, Clock, Users, Heart, Settings, BarChart3, BookOpen, Brain, Gamepad2, Globe, Moon, AlertCircle, CheckCircle2 } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Shield, Eye, Volume2, Clock, Users, Heart, Settings, BarChart3, BookOpen, Brain, Gamepad2, Globe, Moon, AlertCircle, CheckCircle2, RefreshCw, Save, Trash2 } from "lucide-react"
 
 export default function ParentalGuidance() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'safety' | 'settings' | 'activity'>('dashboard')
@@ -9,25 +9,156 @@ export default function ParentalGuidance() {
   const [contentFiltering, setContentFiltering] = useState('moderate')
   const [voiceRecording, setVoiceRecording] = useState(false)
   const [notifications, setNotifications] = useState(true)
-
-  // Mock data for demonstration - in real app this would come from backend
-  const usageStats = {
-    todayMinutes: 23,
-    weekTotal: 156,
+  
+  // API state management
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  
+  // Dynamic data from API
+  const [usageStats, setUsageStats] = useState({
+    todayMinutes: 0,
+    weekTotal: 0,
     favoriteMode: 'Story Mode',
-    storiesHeard: 8,
-    questionsAsked: 15,
-    gamesPlayed: 12,
-    languagesExplored: 3,
-    bedtimeStories: 5
+    storiesHeard: 0,
+    questionsAsked: 0,
+    gamesPlayed: 0,
+    languagesExplored: 0,
+    bedtimeStories: 0
+  })
+  
+  const [recentActivity, setRecentActivity] = useState<Array<{
+    time: string
+    mode: string
+    activity: string
+    duration: string
+    timestamp?: Date
+  }>>([])
+
+  // Load data from API
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/parental-settings')
+      const data = await response.json()
+      
+      if (data.success) {
+        // Update settings
+        if (data.settings) {
+          setTimeLimit(data.settings.timeLimit)
+          setContentFiltering(data.settings.contentFiltering)
+          setVoiceRecording(data.settings.voiceRecording)
+          setNotifications(data.settings.notifications)
+        }
+        
+        // Update usage stats
+        if (data.usage) {
+          setUsageStats(data.usage)
+        }
+        
+        // Update recent activity
+        if (data.activity) {
+          setRecentActivity(data.activity)
+        }
+      }
+    } catch (error) {
+      console.error('Error loading data:', error)
+      showMessage('error', 'Failed to load parental data')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const recentActivity = [
-    { time: '2:30 PM', mode: 'Story Mode', activity: 'Listened to "The Magic Garden"', duration: '8 min' },
-    { time: '1:45 PM', mode: 'Tutor Mode', activity: 'Asked "Why do birds fly?"', duration: '5 min' },
-    { time: '12:15 PM', mode: 'Play Mode', activity: 'Played riddles game', duration: '10 min' },
-    { time: '11:30 AM', mode: 'Language Buddy', activity: 'Learned Spanish greetings', duration: '12 min' }
-  ]
+  // Save settings to API
+  const saveSettings = async () => {
+    try {
+      setSaving(true)
+      const response = await fetch('/api/parental-settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'updateSettings',
+          settings: {
+            timeLimit,
+            contentFiltering,
+            voiceRecording,
+            notifications
+          }
+        })
+      })
+      
+      const data = await response.json()
+      if (data.success) {
+        showMessage('success', 'Settings saved successfully!')
+      } else {
+        showMessage('error', 'Failed to save settings')
+      }
+    } catch (error) {
+      console.error('Error saving settings:', error)
+      showMessage('error', 'Failed to save settings')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Quick actions
+  const handleQuickAction = async (action: string) => {
+    try {
+      setLoading(true)
+      let response
+      
+      if (action === 'resetData') {
+        response = await fetch('/api/parental-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'resetData' })
+        })
+      } else if (action === 'simulateUsage') {
+        response = await fetch('/api/parental-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'simulateUsage' })
+        })
+      } else if (action === 'setTimeLimit') {
+        setActiveTab('settings')
+        return
+      }
+      
+      if (response) {
+        const data = await response.json()
+        if (data.success) {
+          if (action === 'resetData') {
+            showMessage('success', 'Usage data reset successfully')
+            setUsageStats(data.usage)
+            setRecentActivity([])
+          } else if (action === 'simulateUsage') {
+            showMessage('success', 'Demo usage data generated')
+            setUsageStats(data.usage)
+            setRecentActivity(data.activity)
+          }
+        } else {
+          showMessage('error', 'Action failed')
+        }
+      }
+    } catch (error) {
+      console.error('Error executing action:', error)
+      showMessage('error', 'Action failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const showMessage = (type: 'success' | 'error', text: string) => {
+    setMessage({ type, text })
+    setTimeout(() => setMessage(null), 3000)
+  }
+
+  // Load data on component mount
+  useEffect(() => {
+    loadData()
+  }, [])
 
   const safetyFeatures = [
     {
@@ -109,6 +240,24 @@ export default function ParentalGuidance() {
           <p className="text-lg text-purple-600">Monitor, control, and ensure your child's safe learning experience</p>
         </div>
 
+        {/* Success/Error Message */}
+        {message && (
+          <div className={`mb-6 p-4 rounded-2xl border-2 ${
+            message.type === 'success' 
+              ? 'bg-green-100 border-green-300 text-green-700' 
+              : 'bg-red-100 border-red-300 text-red-700'
+          }`}>
+            <div className="flex items-center space-x-2">
+              {message.type === 'success' ? (
+                <CheckCircle2 className="w-5 h-5" />
+              ) : (
+                <AlertCircle className="w-5 h-5" />
+              )}
+              <span className="font-medium">{message.text}</span>
+            </div>
+          </div>
+        )}
+
         {/* Tab Navigation */}
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-2 shadow-lg border-2 border-green-200 mb-8">
           <div className="flex space-x-1">
@@ -118,7 +267,8 @@ export default function ParentalGuidance() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex-1 flex items-center justify-center space-x-2 px-4 py-3 rounded-xl font-medium transition-all ${
+                  disabled={loading}
+                  className={`flex-1 flex items-center justify-center space-x-2 px-4 py-3 rounded-xl font-medium transition-all disabled:opacity-50 ${
                     activeTab === tab.id
                       ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white shadow-lg'
                       : 'text-purple-700 hover:bg-green-100'
@@ -137,22 +287,42 @@ export default function ParentalGuidance() {
           <div className="space-y-8">
             {/* Usage Overview */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 shadow-lg border-2 border-blue-200 text-center">
+              <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 shadow-lg border-2 border-blue-200 text-center relative">
+                {loading && (
+                  <div className="absolute inset-0 bg-white/50 backdrop-blur-sm rounded-3xl flex items-center justify-center">
+                    <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
+                  </div>
+                )}
                 <Clock className="w-8 h-8 text-blue-500 mx-auto mb-3" />
                 <div className="text-2xl font-bold text-purple-800">{usageStats.todayMinutes} min</div>
                 <div className="text-purple-600">Today</div>
               </div>
-              <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 shadow-lg border-2 border-green-200 text-center">
+              <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 shadow-lg border-2 border-green-200 text-center relative">
+                {loading && (
+                  <div className="absolute inset-0 bg-white/50 backdrop-blur-sm rounded-3xl flex items-center justify-center">
+                    <RefreshCw className="w-6 h-6 animate-spin text-green-500" />
+                  </div>
+                )}
                 <BarChart3 className="w-8 h-8 text-green-500 mx-auto mb-3" />
                 <div className="text-2xl font-bold text-purple-800">{usageStats.weekTotal} min</div>
                 <div className="text-purple-600">This Week</div>
               </div>
-              <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 shadow-lg border-2 border-purple-200 text-center">
+              <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 shadow-lg border-2 border-purple-200 text-center relative">
+                {loading && (
+                  <div className="absolute inset-0 bg-white/50 backdrop-blur-sm rounded-3xl flex items-center justify-center">
+                    <RefreshCw className="w-6 h-6 animate-spin text-purple-500" />
+                  </div>
+                )}
                 <Heart className="w-8 h-8 text-purple-500 mx-auto mb-3" />
                 <div className="text-lg font-bold text-purple-800">{usageStats.favoriteMode}</div>
                 <div className="text-purple-600">Favorite Mode</div>
               </div>
-              <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 shadow-lg border-2 border-orange-200 text-center">
+              <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-6 shadow-lg border-2 border-orange-200 text-center relative">
+                {loading && (
+                  <div className="absolute inset-0 bg-white/50 backdrop-blur-sm rounded-3xl flex items-center justify-center">
+                    <RefreshCw className="w-6 h-6 animate-spin text-orange-500" />
+                  </div>
+                )}
                 <BookOpen className="w-8 h-8 text-orange-500 mx-auto mb-3" />
                 <div className="text-2xl font-bold text-purple-800">{usageStats.storiesHeard}</div>
                 <div className="text-purple-600">Stories Heard</div>
@@ -191,16 +361,41 @@ export default function ParentalGuidance() {
 
             {/* Quick Actions */}
             <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-green-200">
-              <h2 className="text-2xl font-bold text-purple-800 mb-6">Quick Actions</h2>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-purple-800">Quick Actions</h2>
+                <button
+                  onClick={loadData}
+                  disabled={loading}
+                  className="bg-gradient-to-r from-gray-500 to-gray-600 text-white px-4 py-2 rounded-xl font-medium hover:shadow-lg transition-all disabled:opacity-50 flex items-center space-x-2"
+                >
+                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <button className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-4 rounded-2xl font-bold hover:shadow-lg transform hover:scale-105 transition-all">
-                  Set Time Limit
+                <button 
+                  onClick={() => handleQuickAction('setTimeLimit')}
+                  disabled={loading}
+                  className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-4 rounded-2xl font-bold hover:shadow-lg transform hover:scale-105 transition-all disabled:opacity-50 flex items-center justify-center space-x-2"
+                >
+                  <Clock className="w-5 h-5" />
+                  <span>Set Time Limit</span>
                 </button>
-                <button className="bg-gradient-to-r from-green-500 to-emerald-500 text-white p-4 rounded-2xl font-bold hover:shadow-lg transform hover:scale-105 transition-all">
-                  Review Content
+                <button 
+                  onClick={() => handleQuickAction('simulateUsage')}
+                  disabled={loading}
+                  className="bg-gradient-to-r from-green-500 to-emerald-500 text-white p-4 rounded-2xl font-bold hover:shadow-lg transform hover:scale-105 transition-all disabled:opacity-50 flex items-center justify-center space-x-2"
+                >
+                  <BarChart3 className="w-5 h-5" />
+                  <span>Demo Usage Data</span>
                 </button>
-                <button className="bg-gradient-to-r from-purple-500 to-pink-500 text-white p-4 rounded-2xl font-bold hover:shadow-lg transform hover:scale-105 transition-all">
-                  Safety Check
+                <button 
+                  onClick={() => handleQuickAction('resetData')}
+                  disabled={loading}
+                  className="bg-gradient-to-r from-purple-500 to-pink-500 text-white p-4 rounded-2xl font-bold hover:shadow-lg transform hover:scale-105 transition-all disabled:opacity-50 flex items-center justify-center space-x-2"
+                >
+                  <Trash2 className="w-5 h-5" />
+                  <span>Reset Data</span>
                 </button>
               </div>
             </div>
@@ -428,12 +623,21 @@ export default function ParentalGuidance() {
               </div>
             </div>
 
-            {/* Save Settings */}
-            <div className="text-center">
-              <button className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all">
-                Save Settings
-              </button>
-            </div>
+                         {/* Save Settings */}
+             <div className="text-center">
+               <button 
+                 onClick={saveSettings}
+                 disabled={saving || loading}
+                 className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all disabled:opacity-50 flex items-center justify-center space-x-2 mx-auto"
+               >
+                 {saving ? (
+                   <RefreshCw className="w-5 h-5 animate-spin" />
+                 ) : (
+                   <Save className="w-5 h-5" />
+                 )}
+                 <span>{saving ? 'Saving...' : 'Save Settings'}</span>
+               </button>
+             </div>
           </div>
         )}
 
