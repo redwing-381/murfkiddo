@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import axios from 'axios'
+import { NaturalSpeechProcessor } from '@/lib/speech-processor'
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 
-function getVoiceId(type: string = 'friendly') {
-  const voices = {
-    friendly: 'en-US-natalie',
-    cheerful: 'en-US-sarah', 
-    calm: 'en-US-kate',
-    playful: 'en-US-katie'
+function getVoiceStyle(type: string = 'friendly') {
+  const styles = {
+    friendly: 'Conversational',
+    cheerful: 'Conversational', 
+    calm: 'Narration',
+    playful: 'Conversational'
   }
-  return voices[type as keyof typeof voices] || voices.friendly
+  return styles[type as keyof typeof styles] || 'Conversational'
 }
 
 export async function POST(request: NextRequest) {
@@ -69,7 +70,10 @@ ${conversationContext}Please respond as MurfKiddo with these guidelines:
 Respond as MurfKiddo would - like a caring, fun, and knowledgeable friend who's always excited to chat!`
 
     const result = await model.generateContent(prompt)
-    const aiResponse = result.response.text()
+    const rawAiResponse = result.response.text()
+    
+    // Process text for natural conversational speech patterns
+    const processedText = NaturalSpeechProcessor.processForConversation(rawAiResponse)
 
     // Generate speech using Murf API
     let audioUrl = null
@@ -77,8 +81,10 @@ Respond as MurfKiddo would - like a caring, fun, and knowledgeable friend who's 
       const murfResponse = await axios.post(
         'https://api.murf.ai/v1/speech/generate',
         {
-          text: aiResponse.replace(/\*/g, '').replace(/#{1,}/g, ''), // Clean up markdown
-          voiceId: getVoiceId(voiceType)
+          text: processedText, // Remove SSML wrapper
+          voice_id: "en-US-natalie",
+          style: getVoiceStyle(voiceType),
+          speed: -3 // Slightly slower for better conversation clarity
         },
         {
           headers: {
@@ -98,7 +104,7 @@ Respond as MurfKiddo would - like a caring, fun, and knowledgeable friend who's 
 
     return NextResponse.json({
       success: true,
-      message: aiResponse,
+      message: rawAiResponse,
       audioUrl,
       timestamp: new Date().toISOString()
     })

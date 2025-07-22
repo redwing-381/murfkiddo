@@ -1,21 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import axios from 'axios'
+import { NaturalSpeechProcessor } from '@/lib/speech-processor'
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 
-// Voice ID mapping for different languages (using available Murf voices)
-const getVoiceForLanguage = (language: string): string => {
-  const voiceMap: { [key: string]: string } = {
-    'spanish': 'en-US-natalie', // Best available voice for Spanish content
-    'french': 'en-US-terrell',  // Best available voice for French content  
-    'chinese': 'en-US-joe',     // Best available voice for Chinese content
-    'german': 'en-US-natalie',  // Best available voice for German content
-    'italian': 'en-US-terrell', // Best available voice for Italian content
-    'japanese': 'en-US-joe',    // Best available voice for Japanese content
-    'english': 'en-US-natalie'  // Default English voice
+// Style mapping for different languages (using en-US-natalie with different styles)
+const getStyleForLanguage = (language: string): string => {
+  const styleMap: { [key: string]: string } = {
+    'spanish': 'Conversational',  // Conversational style for Spanish content
+    'french': 'Narration',        // Narration style for French content  
+    'chinese': 'Conversational',  // Conversational style for Chinese content
+    'german': 'Narration',        // Narration style for German content
+    'italian': 'Conversational',  // Conversational style for Italian content
+    'japanese': 'Narration',      // Narration style for Japanese content
+    'english': 'Conversational'   // Default Conversational style
   }
-  return voiceMap[language.toLowerCase()] || 'en-US-natalie'
+  return styleMap[language.toLowerCase()] || 'Conversational'
 }
 
 export async function POST(request: NextRequest) {
@@ -104,15 +105,20 @@ Keep it fun and supportive - no pressure!`
     }
 
     const result = await model.generateContent(prompt)
-    responseText = result.response.text()
+    const rawResponseText = result.response.text()
+    
+    // Process text for natural educational speech patterns
+    const processedText = NaturalSpeechProcessor.processForEducation(rawResponseText)
 
-    // Convert to speech using appropriate voice for the language
-    const voiceId = getVoiceForLanguage(targetLanguage)
+    // Convert to speech using appropriate style for the language
+    const style = getStyleForLanguage(targetLanguage)
     const murfResponse = await axios.post(
       'https://api.murf.ai/v1/speech/generate',
       {
-        text: responseText,
-        voiceId: voiceId
+        text: processedText, // Remove SSML wrapper
+        voice_id: "en-US-natalie",
+        style: style,
+        speed: -8 // Slower for language learning clarity
       },
       {
         headers: {
@@ -126,7 +132,7 @@ Keep it fun and supportive - no pressure!`
       success: true,
       action,
       targetLanguage,
-      responseText,
+      responseText: rawResponseText,
       audioUrl: murfResponse.data.audioFile,
       learningMode: learningMode || 'general',
     })

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import axios from 'axios'
+import { NaturalSpeechProcessor } from '@/lib/speech-processor'
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 
@@ -63,14 +64,19 @@ Make sure to keep the game going and ask for their next response!`
     }
 
     const result = await model.generateContent(prompt)
-    responseText = result.response.text()
+    const rawResponseText = result.response.text()
+    
+    // Process text for natural conversational game speech
+    const processedText = NaturalSpeechProcessor.processForConversation(rawResponseText)
 
     // Convert to speech using Murf API
     const murfResponse = await axios.post(
       'https://api.murf.ai/v1/speech/generate',
       {
-        text: responseText,
-        voiceId: 'en-US-natalie' // Playful, energetic voice for games
+        text: processedText, // Remove SSML wrapper
+        voice_id: "en-US-natalie",
+        style: "Conversational", // Playful, energetic style for games
+        speed: 0 // Normal speed for games to maintain energy
       },
       {
         headers: {
@@ -83,7 +89,7 @@ Make sure to keep the game going and ask for their next response!`
     return NextResponse.json({
       success: true,
       gameType,
-      responseText,
+      responseText: rawResponseText,
       audioUrl: murfResponse.data.audioFile,
       action,
     })

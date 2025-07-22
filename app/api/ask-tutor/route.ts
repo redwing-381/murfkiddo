@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import axios from 'axios'
+import { NaturalSpeechProcessor } from '@/lib/speech-processor'
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 
@@ -32,14 +33,19 @@ export async function POST(request: NextRequest) {
     Start your response with something like "Great question!" or "That's so cool that you asked!" and make it sound like you're excited to teach them.`
 
     const result = await model.generateContent(prompt)
-    const explanation = result.response.text()
+    const rawExplanation = result.response.text()
+    
+    // Process text for natural educational speech patterns
+    const processedText = NaturalSpeechProcessor.processForEducation(rawExplanation)
 
     // Convert to speech using Murf API
     const murfResponse = await axios.post(
       'https://api.murf.ai/v1/speech/generate',
       {
-        text: explanation,
-        voiceId: 'en-US-natalie' // Use a friendly, educational voice
+        text: processedText, // Remove SSML wrapper
+        voice_id: "en-US-natalie",
+        style: "Conversational", // Use a friendly, educational style
+        speed: -5 // Slightly slower for educational content
       },
       {
         headers: {
@@ -52,7 +58,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       question,
-      explanation,
+      explanation: rawExplanation,
       audioUrl: murfResponse.data.audioFile,
       subject: subject || 'General Knowledge',
     })

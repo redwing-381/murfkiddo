@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import axios from 'axios'
+import { NaturalSpeechProcessor } from '@/lib/speech-processor'
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 
-// Use the most soothing, gentle voice for bedtime content
-const getBedtimeVoice = (): string => {
-  return 'en-US-natalie' // Softest, most calming voice available
+// Use the most soothing, gentle style for bedtime content
+const getBedtimeStyle = (): string => {
+  return 'Narration' // Softest, most calming style available
 }
 
 export async function POST(request: NextRequest) {
@@ -114,15 +115,20 @@ Make it feel like a warm hug in words, perfect for the last thing they hear befo
     }
 
     const result = await model.generateContent(prompt)
-    responseText = result.response.text()
+    const rawResponseText = result.response.text()
+    
+    // Process text for soothing bedtime speech patterns
+    const processedText = NaturalSpeechProcessor.processForBedtime(rawResponseText)
 
-    // Convert to speech using the gentlest voice setting
-    const voiceId = getBedtimeVoice()
+    // Convert to speech using the gentlest style setting
+    const style = getBedtimeStyle()
     const murfResponse = await axios.post(
       'https://api.murf.ai/v1/speech/generate',
       {
-        text: responseText,
-        voiceId: voiceId
+        text: processedText, // Remove SSML wrapper
+        voice_id: "en-US-natalie",
+        style: "Narration", // Always use Narration for soothing bedtime content
+        speed: -15 // Much slower for calming bedtime effect
       },
       {
         headers: {
@@ -136,7 +142,7 @@ Make it feel like a warm hug in words, perfect for the last thing they hear befo
       success: true,
       action,
       contentType: contentType || 'general',
-      responseText,
+      responseText: rawResponseText,
       audioUrl: murfResponse.data.audioFile,
       childName: childName || null,
     })

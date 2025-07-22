@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import axios from 'axios'
+import { NaturalSpeechProcessor } from '@/lib/speech-processor'
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 
@@ -29,14 +30,19 @@ export async function POST(request: NextRequest) {
     Please write only the story content, no additional formatting or titles.`
 
     const result = await model.generateContent(prompt)
-    const storyText = result.response.text()
+    const rawStoryText = result.response.text()
+    
+    // Process text for natural storytelling speech patterns with pauses and emphasis
+    const processedText = NaturalSpeechProcessor.processForStorytelling(rawStoryText)
 
     // Step 2: Convert to speech using Murf API (Simplified format)
     const murfResponse = await axios.post(
       'https://api.murf.ai/v1/speech/generate',
       {
-        text: storyText,
-        voiceId: getVoiceId(voiceType)
+        text: processedText, // Remove SSML wrapper since we're not using SSML breaks
+        voice_id: "en-US-natalie",
+        style: "Narration", // Always use Narration for better storytelling pace
+        speed: -10 // Slow down by 10% for kids to follow better
       },
       {
         headers: {
@@ -48,7 +54,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      storyText,
+      storyText: rawStoryText,
       audioUrl: murfResponse.data.audioFile,
       title: `The Adventure of ${topic}`,
     })
@@ -70,14 +76,13 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function getVoiceId(voiceType: string): string {
-  // Map voice types to actual Murf voice IDs (based on documentation examples)
-  // You should replace these with actual voice IDs from your Murf dashboard
-  const voiceMap = {
-    playful: 'en-US-natalie',  // Kid-friendly, energetic voice
-    calm: 'en-US-terrell',     // Calm, soothing voice for bedtime
-    dramatic: 'en-US-joe',     // More dramatic, storytelling voice
+function getVoiceStyle(voiceType: string): string {
+  // Map voice types to Murf voice styles for en-US-natalie
+  const styleMap = {
+    playful: 'Conversational',    // Kid-friendly, energetic style
+    calm: 'Narration',           // Calm, soothing style for bedtime
+    dramatic: 'Narration',       // Storytelling style
   }
   
-  return voiceMap[voiceType as keyof typeof voiceMap] || voiceMap.playful
+  return styleMap[voiceType as keyof typeof styleMap] || 'Conversational'
 } 
