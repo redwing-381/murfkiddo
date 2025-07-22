@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { BookOpen, Brain, Gamepad2, Globe, Moon } from "lucide-react"
+import { BookOpen, Brain, Gamepad2, Globe, Moon, MessageCircle, Mic, Zap } from "lucide-react"
 
 export default function WelcomePage() {
   const modes = [
@@ -66,6 +66,33 @@ export default function WelcomePage() {
               games, and so much more! What would you like to do today?
             </p>
           </div>
+        </div>
+
+        {/* Featured Chat Option */}
+        <div className="mb-12">
+          <Link href="/chat">
+            <div className="bg-gradient-to-r from-purple-500 via-pink-500 to-orange-400 rounded-3xl p-8 shadow-2xl border-2 border-white/20 hover:shadow-3xl hover:scale-105 transform transition-all duration-300 text-center group cursor-pointer">
+              <div className="w-24 h-24 mx-auto mb-6 p-4 rounded-full bg-white/20 backdrop-blur-sm group-hover:scale-110 transition-transform">
+                <MessageCircle className="w-16 h-16 text-white" />
+              </div>
+              <h2 className="text-3xl font-bold text-white mb-4">💬 Chat with MurfKiddo</h2>
+              <p className="text-white/90 mb-6 text-lg">Have a real-time conversation! Ask me anything and I'll respond instantly with voice!</p>
+              <div className="flex items-center justify-center space-x-6 text-white/90">
+                <span className="flex items-center">
+                  <Mic className="w-4 h-4 mr-2" />
+                  Voice Chat
+                </span>
+                <span className="flex items-center">
+                  <Zap className="w-4 h-4 mr-2" />
+                  Real-time
+                </span>
+                <span className="flex items-center">
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  Conversations
+                </span>
+              </div>
+            </div>
+          </Link>
         </div>
 
         {/* Mode Selection */}
