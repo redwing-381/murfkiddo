@@ -1,9 +1,11 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Mic, MicOff, Send, Brain, Lightbulb, Keyboard } from "lucide-react"
+import { Mic, MicOff, Brain, Lightbulb, Keyboard, Star, Heart } from "lucide-react"
 import AudioPlayer from "@/components/audio-player"
 import LoadingSpinner from "@/components/loading-spinner"
+import UserPreferencesManager from "@/lib/user-preferences"
+import KidAchievements from "@/components/kid-achievements"
 
 interface TutorResponse {
   success: boolean
@@ -43,155 +45,154 @@ export default function TutorMode() {
   const [showTextInput, setShowTextInput] = useState(false)
   const [textInput, setTextInput] = useState("")
   const [selectedSubject, setSelectedSubject] = useState<string>("")
-  const [listeningCountdown, setListeningCountdown] = useState(15)
-  const [aiMessage, setAiMessage] = useState("Hi there! I'm your learning buddy! 🧠 Ask me anything you want to learn about - science, math, animals, space, or anything else!")
+  const [listeningCountdown, setListeningCountdown] = useState(20) // Longer for kids
+  const [questionsAnswered, setQuestionsAnswered] = useState(0)
+  const [aiMessage, setAiMessage] = useState("Hi there, super smart friend! 🧠✨ I'm your learning buddy! Ask me ANYTHING you want to know - about science, animals, space, math, or anything that makes you curious! What amazing question do you have for me?")
 
   const countdownRef = useRef<number | undefined>(undefined)
+  const listeningTimeoutRef = useRef<number | undefined>(undefined)
   const restartAttempts = useRef(0)
 
+  // Set up speech recognition with kid-friendly settings
   useEffect(() => {
-    // Initialize speech recognition
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition()
-        recognition.continuous = true
-        recognition.interimResults = true
-        
-        recognition.onresult = (event) => {
-          let finalTranscript = ''
-          let interimTranscript = ''
-          
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript.trim()
-            if (event.results[i].isFinal) {
-              finalTranscript += transcript
-            } else {
-              interimTranscript += transcript
-            }
-          }
-          
-          if (interimTranscript) {
-            setInterimTranscript(interimTranscript)
-          }
-          
-          if (finalTranscript && finalTranscript.length > 3) {
-            console.log("Final question:", finalTranscript)
-            setTranscript(finalTranscript)
-            stopListening()
-            handleQuestion(finalTranscript)
-          }
-        }
-        
-        recognition.onerror = (event) => {
-          console.error('Speech recognition error:', event.error)
-          setIsListening(false)
-          clearCountdown()
-          
-          if (event.error === 'not-allowed') {
-            setError("I need microphone permission to hear your questions! 🎤 Please allow microphone access.")
-            setShowTextInput(true)
-          } else if (event.error === 'no-speech') {
-            if (restartAttempts.current < 2) {
-              restartAttempts.current++
-              window.setTimeout(() => {
-                if (conversationState === 'listening') {
-                  startListening()
-                }
-              }, 500)
-            } else {
-              setError("I'm having trouble hearing you. Try speaking louder, or use typing! 📢")
-              setShowTextInput(true)
-            }
-          } else if (event.error === 'aborted') {
-            // Normal stop, don't show error
-          } else {
-            setError("Voice recognition isn't working well. Let's try typing instead! ⌨️")
-            setShowTextInput(true)
-          }
-        }
-        
-        recognition.onstart = () => {
-          console.log("Speech recognition started")
-          setIsListening(true)
-          setError(null)
-          setInterimTranscript("")
-          restartAttempts.current = 0
-          startCountdown()
-        }
-        
-        recognition.onend = () => {
-          console.log("Speech recognition ended")
-          setIsListening(false)
-          clearCountdown()
-          
-          if (conversationState === 'listening' && restartAttempts.current < 3) {
-            restartAttempts.current++
-            window.setTimeout(() => {
-              if (conversationState === 'listening') {
-                console.log("Restarting recognition, attempt:", restartAttempts.current)
-                recognition.start()
-              }
-            }, 300)
-          }
-        }
-        
-        setRecognition(recognition)
-      } else {
-        setShowTextInput(true)
-        setAiMessage("Hi! Your browser doesn't support voice, but you can type questions to me! 💬")
+      const recognition = new SpeechRecognition()
+      
+      // More patient settings for children
+      recognition.continuous = true
+      recognition.interimResults = true
+      if ('lang' in recognition) {
+        recognition.lang = 'en-US'
       }
+
+      recognition.onstart = () => {
+        console.log("Speech recognition started")
+        setIsListening(true)
+        setError(null)
+        setListeningCountdown(20) // 20 seconds for kids
+        startCountdown()
+      }
+
+      recognition.onresult = (event) => {
+        let interimTranscript = ''
+        let finalTranscript = ''
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript
+          } else {
+            interimTranscript += event.results[i][0].transcript
+          }
+        }
+
+        setTranscript(finalTranscript)
+        setInterimTranscript(interimTranscript)
+
+        // Auto-submit when we get a complete sentence
+        if (finalTranscript.trim()) {
+          clearTimeout(listeningTimeoutRef.current)
+                     listeningTimeoutRef.current = window.setTimeout(() => {
+             if (finalTranscript.trim()) {
+               handleQuestion(finalTranscript.trim())
+               recognition.stop()
+             }
+           }, 2000) as unknown as number // Wait 2 seconds for more speech
+        }
+      }
+
+      recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error)
+        
+        if (event.error === 'no-speech') {
+          // Auto-restart for kids, but with attempts limit
+          if (restartAttempts.current < 3 && conversationState === 'listening') {
+            restartAttempts.current++
+            setAiMessage("I didn't hear anything! Let's try again! Press the big microphone and speak clearly! 📢✨")
+                         setTimeout(() => {
+               if (!isListening) {
+                 startListening()
+               }
+             }, 1000)
+          } else {
+            setError("I'm having trouble hearing you! Try using the typing option instead! 😊")
+            setAiMessage("No problem! Click 'Switch to Typing' and type your question instead! ⌨️🌟")
+          }
+        } else {
+          setError(`Having trouble with voice recognition. Let's try typing instead! 😊`)
+          setAiMessage("Let's try typing your question instead! Click the typing button! 💻✨")
+        }
+        
+        setIsListening(false)
+        setConversationState('greeting')
+        clearCountdown()
+      }
+
+      recognition.onend = () => {
+        console.log("Speech recognition ended")
+        setIsListening(false)
+        clearCountdown()
+        
+        // If we got a transcript, process it
+        if (transcript.trim()) {
+          handleQuestion(transcript.trim())
+        }
+      }
+
+      setRecognition(recognition)
     }
-  }, [conversationState])
+
+    return () => {
+      clearCountdown()
+      clearTimeout(listeningTimeoutRef.current)
+    }
+  }, [transcript])
+
+  const startCountdown = () => {
+    clearCountdown()
+    let timeLeft = 20
+    setListeningCountdown(timeLeft)
+    
+    countdownRef.current = setInterval(() => {
+      timeLeft -= 1
+      setListeningCountdown(timeLeft)
+      
+      if (timeLeft <= 0) {
+        clearCountdown()
+        if (recognition) {
+          recognition.stop()
+        }
+      }
+    }, 1000) as unknown as number
+  }
 
   const clearCountdown = () => {
     if (countdownRef.current) {
-      window.clearInterval(countdownRef.current)
+      clearInterval(countdownRef.current)
       countdownRef.current = undefined
     }
   }
 
-  const startCountdown = () => {
-    setListeningCountdown(15)
-    
-    countdownRef.current = window.setInterval(() => {
-      setListeningCountdown((prev) => {
-        if (prev <= 1) {
-          stopListening()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-  }
-
   const startListening = () => {
-    if (recognition) {
+    if (recognition && !isListening) {
+      setError(null)
       setTranscript("")
       setInterimTranscript("")
       setConversationState('listening')
-      setAiMessage("I'm listening! 👂 Ask me any question you're curious about!")
+      setAiMessage("I'm listening carefully! Ask me your amazing question! 🎧✨")
       restartAttempts.current = 0
-      
-      try {
-        recognition.start()
-      } catch (error) {
-        console.error("Failed to start recognition:", error)
-        setError("Couldn't start voice recognition. Let's try typing instead! ⌨️")
-        setShowTextInput(true)
-      }
-    } else {
-      setShowTextInput(true)
-      setError("Voice not available - but you can type! 💬")
+      recognition.start()
     }
   }
 
   const stopListening = () => {
     if (recognition && isListening) {
       recognition.stop()
+      clearCountdown()
+      clearTimeout(listeningTimeoutRef.current)
+      setConversationState('greeting')
+      setAiMessage("Ready for your next awesome question! 🌟")
     }
-    setIsListening(false)
-    clearCountdown()
   }
 
   const handleTextInput = () => {
@@ -209,7 +210,7 @@ export default function TutorMode() {
   const handleQuestion = async (question: string) => {
     console.log("Question received:", question)
     setConversationState('learning')
-    setAiMessage("Great question! Let me think about the best way to explain this to you... 🤔✨")
+    setAiMessage("WOW! What a fantastic question! 🤩 Let me think about the BEST way to explain this to you... My brain is working super hard! 🧠💫")
     clearCountdown()
     
     try {
@@ -229,16 +230,20 @@ export default function TutorMode() {
       if (data.success) {
         setCurrentResponse(data)
         setConversationState('explanation_ready')
-        setAiMessage("I've got a great explanation for you! 🌟 Press play to hear it, or ask me another question!")
+        setQuestionsAnswered(prev => prev + 1)
+        setAiMessage("🎉 I'VE GOT AN AMAZING ANSWER FOR YOU! 🎉 Press the play button to hear my explanation, or ask me another super cool question! 🌟")
+        
+        // Track usage - estimate 5 minutes per educational interaction  
+        UserPreferencesManager.trackUsage('Tutor Mode', 5)
       } else {
-        setError(data.error || 'Failed to generate explanation')
+        setError(data.error || 'Hmm, I had trouble with that question, but that\'s okay!')
         setConversationState('greeting')
-        setAiMessage("Hmm, I had trouble with that question. Can you try asking it differently? 🤔")
+        setAiMessage("Oops! I had a little trouble with that question. Can you try asking it in a different way? I'm super excited to help you learn! 😊🌈")
       }
     } catch (err) {
-      setError('Something went wrong. Please try asking again!')
+      setError('Something went wrong, but let\'s try again!')
       setConversationState('greeting')
-      setAiMessage("Oops! Something went wrong. What else would you like to learn about? 😊")
+      setAiMessage("No worries! Sometimes things get a little mixed up. What other amazing things would you like to learn about? 🌟")
       console.error('Error:', err)
     }
   }
@@ -254,7 +259,7 @@ export default function TutorMode() {
     setSelectedSubject("")
     setShowTextInput(false)
     restartAttempts.current = 0
-    setAiMessage("What else would you like to learn about today? I love answering questions! 🎓")
+    setAiMessage("What other incredible things would you like to learn about today? I LOVE answering questions and teaching awesome kids like you! 🎓✨")
   }
 
   const toggleInputMode = () => {
@@ -262,9 +267,9 @@ export default function TutorMode() {
     setShowTextInput(!showTextInput)
     setError(null)
     if (!showTextInput) {
-      setAiMessage("Type your question here! I'm excited to teach you something new! ⌨️")
+      setAiMessage("Perfect! Type your amazing question here! I can't wait to teach you something super cool! ⌨️🌟")
     } else {
-      setAiMessage("Press the microphone to ask me anything! 🎤")
+      setAiMessage("Great! Press the BIG microphone button and ask me your question out loud! 🎤✨")
     }
   }
 
@@ -279,188 +284,208 @@ export default function TutorMode() {
 
   return (
     <div className="min-h-screen px-4 py-8 bg-gradient-to-br from-green-100 via-blue-50 to-purple-100">
-      <div className="max-w-4xl mx-auto">
-        {/* Friendly Header */}
-        <div className="text-center mb-8">
-          <div className="w-32 h-32 bg-gradient-to-r from-green-400 to-emerald-400 rounded-full flex items-center justify-center mx-auto mb-6 float-animation shadow-lg">
-            <span className="text-6xl">🧠</span>
+      <div className="max-w-5xl mx-auto">
+        {/* Super Friendly Header */}
+        <div className="text-center mb-12">
+          <div className="w-40 h-40 bg-gradient-to-r from-green-400 to-emerald-400 rounded-full flex items-center justify-center mx-auto mb-8 float-animation shadow-2xl">
+            <span className="text-8xl">🧠</span>
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-purple-800 mb-4">Your Learning Buddy!</h1>
+          <h1 className="text-5xl md:text-7xl font-black text-purple-800 mb-6 rainbow-text">
+            Learning Time! 🎓
+          </h1>
         </div>
 
-        {/* AI Tutor Speech Bubble */}
-        <div className="mb-8">
-          <div className="bg-gradient-to-r from-blue-400 to-cyan-400 text-white rounded-3xl rounded-bl-lg p-6 max-w-2xl mx-auto shadow-lg">
-            <div className="flex items-center mb-3">
-              <span className="text-3xl mr-3">🎓</span>
-              <span className="font-bold text-xl">Professor MurfKiddo</span>
+        {/* Kid Achievements System */}
+        <div className="mb-12">
+          <KidAchievements 
+            mode="Tutor Mode"
+            currentStats={{
+              questionsAsked: questionsAnswered
+            }}
+          />
+        </div>
+
+        {/* AI Learning Buddy Speech Bubble */}
+        <div className="mb-12">
+          <div className="bg-gradient-to-r from-green-400 to-emerald-400 text-white rounded-3xl rounded-bl-lg p-8 max-w-4xl mx-auto shadow-2xl border-4 border-white/30">
+            <div className="flex items-center mb-6">
+              <span className="text-6xl mr-6 bounce-animation">🎓</span>
+              <span className="font-black text-3xl">Professor MurfKiddo</span>
             </div>
-            <p className="text-lg leading-relaxed">{aiMessage}</p>
-          </div>
-        </div>
+            <p className="text-2xl leading-relaxed font-bold">{aiMessage}</p>
+                </div>
+              </div>
 
-        {/* Input Mode Toggle */}
+        {/* Error Message - Kid Friendly */}
+        {error && (
+          <div className="kid-error mb-8 max-w-2xl mx-auto">
+            <div className="flex items-center mb-4">
+              <span className="text-4xl mr-4">😊</span>
+              <span className="text-2xl font-black">No Problem!</span>
+            </div>
+            <p className="text-xl font-bold">{error}</p>
+          </div>
+        )}
+
+        {/* Input Mode Toggle - Bigger and Friendlier */}
         {conversationState !== 'explanation_ready' && (
-          <div className="text-center mb-4">
+          <div className="text-center mb-8">
             <button
               onClick={toggleInputMode}
-              className="bg-gradient-to-r from-indigo-400 to-purple-400 text-white px-6 py-2 rounded-full font-medium hover:shadow-lg transition-all flex items-center space-x-2 mx-auto"
+              className="kid-toggle"
             >
-              {showTextInput ? <Mic className="w-4 h-4" /> : <Keyboard className="w-4 h-4" />}
-              <span>{showTextInput ? "Switch to Voice" : "Switch to Typing"}</span>
+              {showTextInput ? <Mic className="w-8 h-8" /> : <Keyboard className="w-8 h-8" />}
+              <span className="text-xl font-black">
+                {showTextInput ? "🎤 Switch to Voice!" : "⌨️ Switch to Typing!"}
+              </span>
             </button>
           </div>
         )}
 
-        {/* Voice Input Section */}
+        {/* Voice Input Section - Much Bigger */}
         {conversationState !== 'explanation_ready' && !showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-green-200">
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              {/* Giant Microphone Button */}
               <button
                 onClick={isListening ? stopListening : startListening}
                 disabled={conversationState === 'learning'}
-                className={`w-32 h-32 mx-auto mb-6 rounded-full flex items-center justify-center text-white font-bold text-2xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
+                className={`kid-mic-button mx-auto mb-8 disabled:opacity-50 disabled:cursor-not-allowed ${
                   isListening 
-                    ? 'bg-gradient-to-r from-red-400 to-pink-500 animate-pulse' 
-                    : 'bg-gradient-to-r from-green-400 to-emerald-400'
+                    ? 'bg-gradient-to-r from-red-400 to-pink-500 pulse-animation' 
+                    : 'bg-gradient-to-r from-green-400 to-emerald-400 wiggle-animation'
                 }`}
               >
-                {isListening ? <MicOff className="w-16 h-16" /> : <Mic className="w-16 h-16" />}
+                {isListening ? <MicOff className="w-24 h-24" /> : <Mic className="w-24 h-24" />}
               </button>
-              
+
+              {/* Listening Status - Kid Friendly */}
               {isListening && (
-                <div className="mb-4">
-                  <div className="text-2xl font-bold text-green-600 mb-2">
-                    🎤 Listening... {listeningCountdown}s
-                  </div>
-                  <div className="bg-green-100 rounded-2xl p-3">
-                    <p className="text-green-700 font-medium">Ask your question now! I'm listening for {listeningCountdown} more seconds...</p>
+                <div className="mb-6">
+                  <div className="bg-gradient-to-r from-green-200 to-blue-200 rounded-3xl p-6 shadow-lg">
+                    <p className="text-2xl font-black text-green-800 mb-4">
+                      🎧 I'm Listening Super Carefully! ({listeningCountdown}s)
+                    </p>
+                    <div className="bg-white rounded-full h-6 overflow-hidden">
+                      <div 
+                        className="kid-progress h-full"
+                        style={{ width: `${(listeningCountdown / 20) * 100}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
-              
-              <p className="text-lg text-purple-700 font-medium mb-4">
-                {isListening ? "🗣️ Ask me anything!" : "👆 Press to ask a question!"}
-              </p>
-              
-              {interimTranscript && (
-                <div className="bg-yellow-50 rounded-2xl p-4 mb-4">
-                  <p className="text-yellow-800">
-                    <span className="font-bold">I'm hearing:</span> "{interimTranscript}..."
+
+              {/* What the kid is saying */}
+              {(transcript || interimTranscript) && (
+                <div className="bg-gradient-to-r from-blue-200 to-purple-200 rounded-3xl p-6 mb-6 shadow-lg border-4 border-blue-300">
+                  <p className="text-xl font-black text-blue-800 mb-2">
+                    🗣️ Your Question:
+                  </p>
+                  <p className="text-2xl font-bold text-blue-900">
+                    "{transcript || interimTranscript}"
                   </p>
                 </div>
               )}
               
-              {transcript && (
-                <div className="bg-blue-50 rounded-2xl p-4 mb-4">
-                  <p className="text-blue-800">
-                    <span className="font-bold">Your question:</span> "{transcript}"
-                  </p>
-                </div>
-              )}
-              
-              <p className="text-sm text-purple-600">
+              <p className="text-xl text-purple-600 font-bold">
                 💡 Try asking: "Why is the sky blue?" or "How do airplanes fly?"
               </p>
             </div>
           </div>
         )}
 
-        {/* Text Input Section */}
+        {/* Text Input Section - Much Bigger */}
         {conversationState !== 'explanation_ready' && showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-green-200">
-              <div className="flex items-center space-x-4 max-w-lg mx-auto">
-                <input
-                  type="text"
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              <div className="flex flex-col space-y-6">
+              <input
+                type="text"
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleTextInput()}
                   placeholder="Ask me anything you want to learn about..."
-                  className="flex-1 px-6 py-4 text-lg rounded-2xl border-2 border-green-200 focus:border-green-400 focus:outline-none"
+                  className="kid-input"
                   disabled={conversationState === 'learning'}
                 />
                 <button
                   onClick={handleTextInput}
                   disabled={!textInput.trim() || conversationState === 'learning'}
-                  className="bg-gradient-to-r from-green-400 to-emerald-400 text-white px-6 py-4 rounded-2xl font-bold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="kid-button mx-auto"
                 >
-                  <Brain className="w-6 h-6" />
+                  <Brain className="w-8 h-8 mr-4" />
+                  Teach Me! 🌟
                 </button>
               </div>
-              <p className="text-sm text-purple-600 mt-4">
+              <p className="text-xl text-purple-600 font-bold mt-6">
                 💡 Try: "How do magnets work?" or "Why do we need to sleep?"
               </p>
             </div>
           </div>
         )}
 
-        {/* Loading State */}
+        {/* Loading State - Fun for Kids */}
         {conversationState === 'learning' && (
-          <div className="text-center mb-8">
-            <LoadingSpinner />
-            <p className="text-purple-600 mt-4 text-lg font-medium">
-              🧠 Let me think about the best way to explain this... ✨
-            </p>
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && (
-          <div className="bg-red-100 border-2 border-red-300 rounded-3xl p-6 mb-8">
-            <div className="text-center">
-              <span className="text-4xl mb-2 block">😔</span>
-              <p className="text-red-700 font-semibold text-lg">{error}</p>
-              <div className="mt-4 space-x-4">
-                <button 
-                  onClick={resetConversation}
-                  className="bg-gradient-to-r from-green-400 to-emerald-400 text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all"
-                >
-                  Try Again
-                </button>
-                {!showTextInput && (
-                  <button 
-                    onClick={toggleInputMode}
-                    className="bg-gradient-to-r from-blue-400 to-cyan-400 text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all"
-                  >
-                    Type Instead
-                  </button>
-                )}
-              </div>
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-2xl mx-auto">
+              <div className="text-8xl mb-6 kid-loading">🧠</div>
+              <p className="text-3xl font-black text-purple-600 mb-4">
+                ✨ Finding the Perfect Answer! ✨
+              </p>
+              <p className="text-xl font-bold text-purple-500">
+                🔍 Searching my brain... 💫 Making it super easy to understand... 🎉 Almost ready!
+              </p>
+              <LoadingSpinner />
             </div>
           </div>
         )}
 
-        {/* Explanation Display */}
-        {currentResponse && conversationState === 'explanation_ready' && (
-          <div className="space-y-6 mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-blue-200">
-              <div className="text-center mb-6">
-                <h2 className="text-3xl font-bold text-purple-800 mb-4">🌟 Here's Your Answer! 🌟</h2>
-                <div className="bg-gradient-to-r from-green-100 to-emerald-100 rounded-2xl p-4 mb-6">
-                  <h3 className="text-lg font-semibold text-green-800 mb-2">{currentResponse.subject}</h3>
-                  <p className="text-green-700 italic">"{currentResponse.question}"</p>
-                </div>
+        {/* Explanation Ready - Celebration */}
+        {conversationState === 'explanation_ready' && currentResponse && (
+          <div className="space-y-8">
+            {/* Celebration Header */}
+            <div className="text-center">
+              <div className="kid-success max-w-3xl mx-auto">
+                <div className="text-6xl mb-4 bounce-animation">🌟</div>
+                <h2 className="text-4xl font-black text-green-800 mb-4">
+                  I'VE GOT YOUR ANSWER! 
+                </h2>
+                <p className="text-2xl font-bold text-green-700">
+                  This is going to be so cool to learn! 🎓
+                </p>
               </div>
+            </div>
 
-              {/* Explanation Text */}
-              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-2xl p-6 mb-6 max-h-48 overflow-y-auto">
-                <p className="text-gray-700 leading-relaxed text-lg">{currentResponse.explanation}</p>
-              </div>
-
+            {/* Audio Player */}
+            <div className="max-w-4xl mx-auto">
               <AudioPlayer 
+                audioUrl={currentResponse.audioUrl} 
                 title={`Learning about: ${currentResponse.subject}`}
-                audioUrl={currentResponse.audioUrl}
+                autoPlay={true}
               />
-              
-              <div className="text-center mt-6">
-                <button 
-                  onClick={resetConversation}
-                  className="bg-gradient-to-r from-green-400 to-emerald-400 text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all"
-                >
-                  Ask Another Question! 🤔
-                </button>
+            </div>
+
+            {/* Explanation Text Display */}
+            <div className="kid-message-box max-w-4xl mx-auto">
+              <h3 className="text-3xl font-black text-purple-800 mb-6">🧠 {currentResponse.subject}</h3>
+              <div className="bg-gradient-to-r from-green-100 to-emerald-100 rounded-2xl p-4 mb-6">
+                <p className="text-green-700 italic text-xl">"{currentResponse.question}"</p>
               </div>
+              <div className="text-xl leading-relaxed text-purple-700 font-semibold">
+                {currentResponse.explanation}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="text-center space-y-6">
+              <button
+                onClick={resetConversation}
+                className="kid-button"
+              >
+                <Star className="w-8 h-8 mr-4" />
+                Ask Another Question! 🤔
+              </button>
             </div>
           </div>
         )}
@@ -468,27 +493,27 @@ export default function TutorMode() {
         {/* Learning Topics */}
         {conversationState !== 'explanation_ready' && (
           <div className="mb-8">
-            <h2 className="text-2xl font-bold text-purple-800 text-center mb-6">
-              <Lightbulb className="inline w-8 h-8 mr-2 text-yellow-500" />
-              Quick Learning Topics
+            <h2 className="text-3xl font-black text-purple-800 text-center mb-8">
+              <Lightbulb className="inline w-10 h-10 mr-3 text-yellow-500 bounce-animation" />
+              Quick Learning Topics! 🌟
             </h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {learningTopics.map((topic, index) => (
-                <div key={index} className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 shadow-lg border-2 border-purple-200 hover:border-purple-400 transition-all">
+                <div key={index} className="bg-white/90 rounded-3xl p-6 shadow-lg border-4 border-purple-200 hover:border-purple-400 transform hover:scale-105 transition-all">
                   <div className="text-center">
-                    <div className="text-3xl mb-2">{topic.emoji}</div>
-                    <h3 className="font-bold text-purple-800 mb-3">{topic.topic}</h3>
-                    <div className="space-y-1">
+                    <div className="text-5xl mb-4 bounce-animation">{topic.emoji}</div>
+                    <h3 className="font-black text-2xl text-purple-800 mb-4">{topic.topic}</h3>
+                    <div className="space-y-2">
                       {topic.questions.slice(0, 2).map((question, qIndex) => (
-                        <button
+            <button
                           key={qIndex}
                           onClick={() => handleTopicQuestion(topic.topic, question)}
-                          className="text-xs text-purple-600 hover:text-purple-800 hover:bg-purple-100 px-2 py-1 rounded-full transition-all block w-full"
+                          className="text-lg text-purple-600 hover:text-white hover:bg-purple-500 px-4 py-2 rounded-full transition-all block w-full font-bold"
                         >
                           {question}
-                        </button>
-                      ))}
-                    </div>
+            </button>
+          ))}
+        </div>
                   </div>
                 </div>
               ))}

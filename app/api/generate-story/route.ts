@@ -3,20 +3,52 @@ import { GoogleGenerativeAI } from '@google/generative-ai'
 import axios from 'axios'
 import { NaturalSpeechProcessor } from '@/lib/speech-processor'
 
+// Validate environment variables
+if (!process.env.GEMINI_API_KEY) {
+  console.error('Missing GEMINI_API_KEY environment variable')
+}
+if (!process.env.MURF_API_KEY) {
+  console.error('Missing MURF_API_KEY environment variable')
+}
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
+
+// Input sanitization
+function sanitizeInput(input: string): string {
+  return input
+    .trim()
+    .replace(/[<>]/g, '') // Remove potential HTML
+    .slice(0, 500) // Limit length
+}
 
 export async function POST(request: NextRequest) {
   try {
+    // Environment check
+    if (!process.env.GEMINI_API_KEY || !process.env.MURF_API_KEY) {
+      return NextResponse.json(
+        { error: 'Service temporarily unavailable' },
+        { status: 503 }
+      )
+    }
+
     const { topic, voiceType } = await request.json()
 
     if (!topic) {
       return NextResponse.json({ error: 'Topic is required' }, { status: 400 })
     }
 
+    // Sanitize inputs
+    const safeTopic = sanitizeInput(topic)
+    const safeVoiceType = voiceType ? sanitizeInput(voiceType) : 'calm'
+
+    if (safeTopic.length < 2) {
+      return NextResponse.json({ error: 'Topic too short' }, { status: 400 })
+    }
+
     // Step 1: Generate story using Gemini
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
 
-    const prompt = `Write a fun, educational, and age-appropriate story for children aged 5-12 about "${topic}". 
+    const prompt = `Write a fun, educational, and age-appropriate story for children aged 5-12 about "${safeTopic}". 
     The story should be:
     - About 200-300 words long
     - Positive and uplifting with a good moral lesson
@@ -25,7 +57,7 @@ export async function POST(request: NextRequest) {
     - Be imaginative but not scary
     - Have a clear beginning, middle, and end
     
-    Voice style: ${voiceType}
+    Voice style: ${safeVoiceType}
     
     Please write only the story content, no additional formatting or titles.`
 
@@ -49,6 +81,7 @@ export async function POST(request: NextRequest) {
           'api-key': process.env.MURF_API_KEY,
           'Content-Type': 'application/json',
         },
+        timeout: 30000, // 30 second timeout
       }
     )
 
@@ -56,7 +89,7 @@ export async function POST(request: NextRequest) {
       success: true,
       storyText: rawStoryText,
       audioUrl: murfResponse.data.audioFile,
-      title: `The Adventure of ${topic}`,
+      title: `The Adventure of ${safeTopic}`,
     })
   } catch (error) {
     console.error('Error generating story:', error)

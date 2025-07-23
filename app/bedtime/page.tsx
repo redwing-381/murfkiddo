@@ -1,17 +1,18 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Mic, MicOff, Moon, Star, Heart, Wind, Keyboard, Volume2 } from "lucide-react"
+import { Mic, MicOff, Moon, Star, Heart, Keyboard, Volume2, Sparkles } from "lucide-react"
 import AudioPlayer from "@/components/audio-player"
 import LoadingSpinner from "@/components/loading-spinner"
+import UserPreferencesManager from "@/lib/user-preferences"
+import KidAchievements from "@/components/kid-achievements"
 
 interface BedtimeResponse {
   success: boolean
-  action: string
-  contentType: string
   responseText: string
   audioUrl: string
-  childName: string | null
+  contentType: string
+  title: string
   error?: string
 }
 
@@ -37,225 +38,183 @@ export default function BedtimeMode() {
   const [isListening, setIsListening] = useState(false)
   const [transcript, setTranscript] = useState("")
   const [interimTranscript, setInterimTranscript] = useState("")
-  const [bedtimeState, setBedtimeState] = useState<'welcome' | 'content_select' | 'personalizing' | 'listening' | 'processing' | 'content_ready'>('welcome')
+  const [conversationState, setConversationState] = useState<'menu' | 'listening' | 'creating' | 'content_ready'>('menu')
   const [currentResponse, setCurrentResponse] = useState<BedtimeResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [recognition, setRecognition] = useState<SpeechRecognition | null>(null)
   const [showTextInput, setShowTextInput] = useState(false)
   const [textInput, setTextInput] = useState("")
   const [selectedContentType, setSelectedContentType] = useState<string>("")
-  const [childName, setChildName] = useState<string>("")
-  const [favoriteThings, setFavoriteThings] = useState<string>("")
-  const [listeningCountdown, setListeningCountdown] = useState(15)
-  const [storiesCount, setStoriesCount] = useState(0)
-  const [aiMessage, setAiMessage] = useState("Shhh... welcome to bedtime, little one. 🌙 I'm here to help you have the most peaceful sleep with gentle stories, soft lullabies, and sweet dreams. What would help you relax tonight?")
+  const [listeningCountdown, setListeningCountdown] = useState(20) // Longer for kids
+  const [bedtimeStories, setBedtimeStories] = useState(0)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [aiMessage, setAiMessage] = useState("Good evening, little dreamer! 🌙✨ I'm your cozy bedtime companion! I can create magical bedtime stories, sing gentle lullabies, or help you relax before sleep. What sounds perfect for your bedtime tonight?")
 
   const countdownRef = useRef<number | undefined>(undefined)
+  const listeningTimeoutRef = useRef<number | undefined>(undefined)
   const restartAttempts = useRef(0)
 
+  // Set up speech recognition with kid-friendly settings
   useEffect(() => {
-    // Initialize speech recognition
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition()
-        recognition.continuous = true
-        recognition.interimResults = true
-        
-        recognition.onresult = (event) => {
-          let finalTranscript = ''
-          let interimTranscript = ''
-          
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript.trim()
-            if (event.results[i].isFinal) {
-              finalTranscript += transcript
-            } else {
-              interimTranscript += transcript
-            }
-          }
-          
-          if (interimTranscript) {
-            setInterimTranscript(interimTranscript)
-          }
-          
-          if (finalTranscript && finalTranscript.length > 1) {
-            console.log("Bedtime input:", finalTranscript)
-            setTranscript(finalTranscript)
-            stopListening()
-            if (bedtimeState === 'personalizing') {
-              handlePersonalization(finalTranscript)
-            } else {
-              handleBedtimeInput(finalTranscript)
-            }
-          }
-        }
-        
-        recognition.onerror = (event) => {
-          console.error('Speech recognition error:', event.error)
-          setIsListening(false)
-          clearCountdown()
-          
-          if (event.error === 'not-allowed') {
-            setError("I need microphone permission to hear your bedtime wishes 🎤 Please allow microphone access.")
-            setShowTextInput(true)
-          } else if (event.error === 'no-speech') {
-            if (restartAttempts.current < 2) {
-              restartAttempts.current++
-              window.setTimeout(() => {
-                if (bedtimeState === 'listening' || bedtimeState === 'personalizing') {
-                  startListening()
-                }
-              }, 500)
-            } else {
-              setError("I'm having trouble hearing you whisper. Try typing softly instead! ⌨️")
-              setShowTextInput(true)
-            }
-          } else if (event.error === 'aborted') {
-            // Normal stop, don't show error
-          } else {
-            setError("Let's try typing your bedtime wishes instead! 💤")
-            setShowTextInput(true)
-          }
-        }
-        
-        recognition.onstart = () => {
-          console.log("Speech recognition started")
-          setIsListening(true)
-          setError(null)
-          setInterimTranscript("")
-          restartAttempts.current = 0
-          startCountdown()
-        }
-        
-        recognition.onend = () => {
-          console.log("Speech recognition ended")
-          setIsListening(false)
-          clearCountdown()
-          
-          if ((bedtimeState === 'listening' || bedtimeState === 'personalizing') && restartAttempts.current < 3) {
-            restartAttempts.current++
-            window.setTimeout(() => {
-              if (bedtimeState === 'listening' || bedtimeState === 'personalizing') {
-                console.log("Restarting recognition, attempt:", restartAttempts.current)
-                recognition.start()
-              }
-            }, 300)
-          }
-        }
-        
-        setRecognition(recognition)
-      } else {
-        setShowTextInput(true)
-        setAiMessage("Hi sleepy one! Your browser doesn't support voice, but you can type your bedtime wishes! 💤")
+      const recognition = new SpeechRecognition()
+      
+      // More patient settings for children
+      recognition.continuous = true
+      recognition.interimResults = true
+      if ('lang' in recognition) {
+        recognition.lang = 'en-US'
       }
+
+      recognition.onstart = () => {
+        console.log("Speech recognition started")
+        setIsListening(true)
+        setError(null)
+        setListeningCountdown(20) // 20 seconds for kids
+        startCountdown()
+      }
+
+      recognition.onresult = (event) => {
+        let interimTranscript = ''
+        let finalTranscript = ''
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript
+          } else {
+            interimTranscript += event.results[i][0].transcript
+          }
+        }
+
+        setTranscript(finalTranscript)
+        setInterimTranscript(interimTranscript)
+
+        // Auto-submit when we get a complete sentence
+        if (finalTranscript.trim()) {
+          clearTimeout(listeningTimeoutRef.current)
+          listeningTimeoutRef.current = window.setTimeout(() => {
+            if (finalTranscript.trim()) {
+              handleBedtimeRequest(finalTranscript.trim())
+              recognition.stop()
+            }
+          }, 2000) as unknown as number // Wait 2 seconds for more speech
+        }
+      }
+
+      recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error)
+        
+        if (event.error === 'no-speech') {
+          // Auto-restart for kids, but with attempts limit
+          if (restartAttempts.current < 3 && conversationState === 'listening') {
+            restartAttempts.current++
+            setAiMessage("I didn't hear anything! Let's try again! Press the big microphone and speak softly! 📢✨")
+            setTimeout(() => {
+              if (!isListening) {
+                startListening()
+              }
+            }, 1000)
+          } else {
+            setError("I'm having trouble hearing you! Try using the typing option instead! 😊")
+            setAiMessage("No problem! Click 'Switch to Typing' and type what you'd like for bedtime! ⌨️🌟")
+          }
+        } else {
+          setError(`Having trouble with voice recognition. Let's try typing instead! 😊`)
+          setAiMessage("Let's try typing what you'd like for bedtime instead! Click the typing button! 💻✨")
+        }
+        
+        setIsListening(false)
+        setConversationState('menu')
+        clearCountdown()
+      }
+
+      recognition.onend = () => {
+        console.log("Speech recognition ended")
+        setIsListening(false)
+        clearCountdown()
+        
+        // If we got a transcript, process it
+        if (transcript.trim()) {
+          handleBedtimeRequest(transcript.trim())
+        }
+      }
+
+      setRecognition(recognition)
     }
-  }, [bedtimeState])
+
+    return () => {
+      clearCountdown()
+      clearTimeout(listeningTimeoutRef.current)
+    }
+  }, [transcript, conversationState])
+
+  const startCountdown = () => {
+    clearCountdown()
+    let timeLeft = 20
+    setListeningCountdown(timeLeft)
+    
+    countdownRef.current = setInterval(() => {
+      timeLeft -= 1
+      setListeningCountdown(timeLeft)
+      
+      if (timeLeft <= 0) {
+        clearCountdown()
+        if (recognition) {
+          recognition.stop()
+        }
+      }
+    }, 1000) as unknown as number
+  }
 
   const clearCountdown = () => {
     if (countdownRef.current) {
-      window.clearInterval(countdownRef.current)
+      clearInterval(countdownRef.current)
       countdownRef.current = undefined
     }
   }
 
-  const startCountdown = () => {
-    setListeningCountdown(15)
-    
-    countdownRef.current = window.setInterval(() => {
-      setListeningCountdown((prev) => {
-        if (prev <= 1) {
-          stopListening()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-  }
-
   const startListening = () => {
-    if (recognition) {
+    if (recognition && !isListening) {
+      setError(null)
       setTranscript("")
       setInterimTranscript("")
+      setConversationState('listening')
+      setAiMessage("I'm listening softly! Tell me what would help you have sweet dreams! 🎧✨")
       restartAttempts.current = 0
-      
-      try {
-        recognition.start()
-      } catch (error) {
-        console.error("Failed to start recognition:", error)
-        setError("Let's try typing your bedtime wishes instead! ⌨️")
-        setShowTextInput(true)
-      }
-    } else {
-      setShowTextInput(true)
-      setError("Let's type your bedtime wishes! 💤")
+      recognition.start()
     }
   }
 
   const stopListening = () => {
     if (recognition && isListening) {
       recognition.stop()
+      clearCountdown()
+      clearTimeout(listeningTimeoutRef.current)
+      setConversationState('menu')
+      setAiMessage("Ready to help you have the most wonderful bedtime! 🌟")
     }
-    setIsListening(false)
-    clearCountdown()
   }
 
   const handleTextInput = () => {
     if (textInput.trim()) {
-      if (bedtimeState === 'personalizing') {
-        handlePersonalization(textInput.trim())
-      } else {
-        handleBedtimeInput(textInput.trim())
-      }
+      handleBedtimeRequest(textInput.trim())
       setTextInput("")
     }
   }
 
-  const selectContentType = (contentType: string, action: string) => {
+  const startBedtimeContent = (contentType: string) => {
     setSelectedContentType(contentType)
-    setBedtimeState('personalizing')
-    setAiMessage(`Perfect choice! 🌙 To make this extra special, what's your name? And what are some things you love? (like teddy bears, puppies, or fairy tales)`)
+    setConversationState('creating')
+    setAiMessage(`Sweet! 🌙 Let me create the most magical ${contentType} to help you have beautiful dreams! This is going to be so peaceful and wonderful! ✨`)
+    handleBedtimeRequest(`create ${contentType}`)
   }
 
-  const handlePersonalization = (input: string) => {
-    // Simple parsing - look for name and favorite things
-    const words = input.toLowerCase().split(/\s+/)
-    let detectedName = ""
-    let detectedFavorites = input
-
-    // Try to extract name (simple heuristic)
-    if (input.toLowerCase().includes("my name is")) {
-      const nameIndex = words.indexOf("name") + 2
-      if (nameIndex < words.length) {
-        detectedName = words[nameIndex]
-      }
-    } else {
-      // Assume first word might be name if it's short
-      const firstWord = words[0]
-      if (firstWord && firstWord.length <= 10 && firstWord.match(/^[a-zA-Z]+$/)) {
-        detectedName = firstWord
-      }
-    }
-
-    setChildName(detectedName || "little one")
-    setFavoriteThings(detectedFavorites || "gentle dreams and cozy blankets")
-    
-    // Now generate the content
-    generateBedtimeContent(detectedName, detectedFavorites)
-  }
-
-  const generateBedtimeContent = async (name?: string, favorites?: string) => {
-    setBedtimeState('processing')
-    setError(null)
-    setAiMessage("Creating something peaceful just for you... 💤✨")
+  const handleBedtimeRequest = async (request: string) => {
+    console.log("Bedtime request:", request)
+    setConversationState('creating')
+    setIsProcessing(true)
     clearCountdown()
-    
-    const actionMap: { [key: string]: string } = {
-      'gentle_story': 'bedtime_story',
-      'soft_lullaby': 'lullaby', 
-      'calm_breathing': 'relaxation',
-      'sweet_dreams': 'goodnight_wishes'
-    }
     
     try {
       const response = await fetch('/api/bedtime-companion', {
@@ -264,10 +223,8 @@ export default function BedtimeMode() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          action: actionMap[selectedContentType] || 'bedtime_story',
+          request: request,
           contentType: selectedContentType,
-          childName: name || childName,
-          favoriteThings: favorites || favoriteThings,
         }),
       })
 
@@ -275,57 +232,50 @@ export default function BedtimeMode() {
 
       if (data.success) {
         setCurrentResponse(data)
-        setBedtimeState('content_ready')
-        if (data.action === 'bedtime_story') {
-          setStoriesCount(storiesCount + 1)
-        }
-        setAiMessage("Your peaceful bedtime content is ready... 🌙 Close your eyes and listen to sweet dreams ✨")
+        setConversationState('content_ready')
+        setBedtimeStories(prev => prev + 1)
+        setAiMessage("🌙 YOUR BEDTIME MAGIC IS READY! 🌙 Listen to this gentle content and let it help you drift off to dreamland! Sweet dreams! 💫")
+        
+        // Track usage - estimate 12 minutes for bedtime content
+        UserPreferencesManager.trackUsage('Bedtime Mode', 12)
       } else {
-        setError(data.error || 'Failed to create bedtime content')
-        setBedtimeState('content_select')
-        setAiMessage("Let's try creating something else peaceful for bedtime... 💤")
+        setError(data.error || 'Hmm, I had trouble creating that bedtime content, but that\'s okay!')
+        setConversationState('menu')
+        setAiMessage("Oops! I had a little trouble with that. Can you try asking for something different for bedtime? I'm here to help you sleep peacefully! 😊🌈")
       }
+      setIsProcessing(false)
     } catch (err) {
-      setError('Something went wrong. Let\'s try again with gentle dreams!')
-      setBedtimeState('content_select')
-      setAiMessage("Let's create something soothing for sweet dreams... 😴")
+      setError('Something went wrong, but let\'s try again!')
+      setConversationState('menu')
+      setAiMessage("No worries! Sometimes things get a little mixed up. What other peaceful thing would help you sleep tonight? 🌟")
+      setIsProcessing(false)
       console.error('Error:', err)
     }
   }
 
-  const handleBedtimeInput = (input: string) => {
-    // This could be used for interactive bedtime conversations if needed
-    console.log("General bedtime input:", input)
-    // For now, just acknowledge
-    setAiMessage("That sounds lovely... let's choose what would help you sleep peacefully tonight 🌙")
-  }
-
-  const startNewContent = () => {
-    setBedtimeState('content_select')
-    setCurrentResponse(null)
-    setError(null)
-    setTranscript("")
-    setInterimTranscript("")
-    setChildName("")
-    setFavoriteThings("")
-    setSelectedContentType("")
-    setAiMessage("What else would help you drift off to dreamland tonight? 😴✨")
-  }
-
-  const backToWelcome = () => {
+  const resetConversation = () => {
     stopListening()
-    setBedtimeState('welcome')
+    setConversationState('menu')
     setCurrentResponse(null)
     setError(null)
     setTranscript("")
     setInterimTranscript("")
     setTextInput("")
-    setChildName("")
-    setFavoriteThings("")
     setSelectedContentType("")
     setShowTextInput(false)
+    setIsProcessing(false)
     restartAttempts.current = 0
-    setAiMessage("Welcome back to your peaceful bedtime space... 🌙 I'm here for sweet dreams whenever you're ready")
+    setAiMessage("What other dreamy bedtime magic would you like? I LOVE helping wonderful kids like you have the sweetest dreams! 🌙✨")
+  }
+
+  const continueListening = () => {
+    setConversationState('listening')
+    setCurrentResponse(null)
+    setError(null)
+    setTranscript("")
+    setInterimTranscript("")
+    setTextInput("")
+    setAiMessage("What else would help you have sweet dreams tonight? Tell me what sounds cozy and peaceful! 🎉")
   }
 
   const toggleInputMode = () => {
@@ -333,325 +283,315 @@ export default function BedtimeMode() {
     setShowTextInput(!showTextInput)
     setError(null)
     if (!showTextInput) {
-      setAiMessage("Type your bedtime wishes softly... 💤")
+      setAiMessage("Perfect! Type what would help you sleep peacefully! I can't wait to create something magical for you! ⌨️🌟")
     } else {
-      setAiMessage("Whisper your bedtime dreams to me... 🌙")
+      setAiMessage("Great! Press the BIG microphone button and whisper what you'd like for bedtime! 🎤✨")
     }
   }
 
-  const bedtimeContentTypes = [
+  const bedtimeContent = [
     { 
-      id: "gentle_story", 
-      name: "Bedtime Story", 
-      icon: "📖", 
-      description: "A gentle, dreamy story to drift off to",
-      color: "from-indigo-400/80 to-purple-400/80",
-      action: "bedtime_story"
+      type: "bedtime story", 
+      name: "Sleepy Story", 
+      emoji: "📚", 
+      description: "A gentle tale to drift off to!",
+      color: "from-purple-400 to-blue-400"
     },
     { 
-      id: "soft_lullaby", 
-      name: "Lullaby", 
-      icon: "🎵", 
-      description: "Soft, soothing lullaby just for you",
-      color: "from-purple-400/80 to-pink-400/80",
-      action: "lullaby"
+      type: "lullaby", 
+      name: "Soft Lullaby", 
+      emoji: "🎵", 
+      description: "Peaceful melodies for dreams!",
+      color: "from-pink-400 to-purple-400"
     },
     { 
-      id: "calm_breathing", 
-      name: "Relaxation", 
-      icon: "🫧", 
-      description: "Gentle breathing and peaceful thoughts",
-      color: "from-blue-400/80 to-indigo-400/80",
-      action: "relaxation"
+      type: "relaxation", 
+      name: "Calm & Cozy", 
+      emoji: "🧘", 
+      description: "Breathing and relaxation!",
+      color: "from-green-400 to-blue-400"
     },
     { 
-      id: "sweet_dreams", 
-      name: "Goodnight Wishes", 
-      icon: "💤", 
-      description: "Special goodnight message for you",
-      color: "from-pink-400/80 to-red-400/80",
-      action: "goodnight_wishes"
+      type: "nature sounds", 
+      name: "Peaceful Sounds", 
+      emoji: "🌊", 
+      description: "Soothing nature for sleep!",
+      color: "from-blue-400 to-teal-400"
     },
+    { 
+      type: "goodnight wishes", 
+      name: "Sweet Dreams", 
+      emoji: "⭐", 
+      description: "Gentle wishes for bedtime!",
+      color: "from-yellow-400 to-orange-400"
+    },
+    { 
+      type: "counting sheep", 
+      name: "Sleepy Counting", 
+      emoji: "🐑", 
+      description: "Count your way to dreamland!",
+      color: "from-gray-400 to-blue-400"
+    }
   ]
 
   return (
-    <div className="min-h-screen px-4 py-8 bg-gradient-to-b from-indigo-900 via-purple-900 to-blue-900 relative">
-      {/* Floating Stars Animation */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        {[...Array(15)].map((_, i) => (
-          <div
-            key={i}
-            className="absolute text-white/10 animate-pulse"
-            style={{
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              animationDelay: `${Math.random() * 3}s`,
-              fontSize: `${Math.random() * 8 + 8}px`,
-            }}
-          >
-            ⭐
+    <div className="min-h-screen px-4 py-8 bg-gradient-to-br from-indigo-100 via-purple-50 to-blue-100">
+      <div className="max-w-5xl mx-auto">
+        {/* Super Friendly Header */}
+        <div className="text-center mb-12">
+          <div className="w-40 h-40 bg-gradient-to-r from-indigo-400 to-purple-400 rounded-full flex items-center justify-center mx-auto mb-8 float-animation shadow-2xl">
+            <span className="text-8xl">🌙</span>
           </div>
-        ))}
-      </div>
+          <h1 className="text-5xl md:text-7xl font-black text-purple-800 mb-6 rainbow-text">
+            Sleepy Time! 😴
+          </h1>
+        </div>
 
-      <div className="max-w-4xl mx-auto relative z-10">
-        {/* Gentle Header */}
-        <div className="text-center mb-8">
-          <div className="w-32 h-32 bg-gradient-to-r from-indigo-400/80 to-purple-400/80 rounded-full flex items-center justify-center mx-auto mb-6 float-animation shadow-lg backdrop-blur-sm border border-white/20">
-            <span className="text-6xl">🌙</span>
-          </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4">Sweet Dreams</h1>
-          
-          {/* Progress Display */}
-          <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 max-w-md mx-auto shadow-lg border border-white/20">
-            <div className="flex items-center justify-center space-x-6">
-              <div className="flex items-center space-x-2">
-                <Moon className="w-6 h-6 text-indigo-300" />
-                <span className="font-bold text-white">Bedtime Stories: {storiesCount}</span>
-              </div>
-              <div className="flex space-x-1">
-                {[...Array(3)].map((_, i) => (
-                  <Star key={i} className={`w-5 h-5 ${i < Math.min(storiesCount, 3) ? "text-yellow-300 fill-current" : "text-white/20"}`} />
-                ))}
-              </div>
-            </div>
-          </div>
+        {/* Kid Achievements System */}
+        <div className="mb-12">
+          <KidAchievements 
+            mode="Bedtime Mode"
+            currentStats={{
+              bedtimeStories: bedtimeStories
+            }}
+          />
         </div>
 
         {/* AI Bedtime Companion Speech Bubble */}
-        <div className="mb-8">
-          <div className="bg-gradient-to-r from-indigo-400/80 to-purple-400/80 backdrop-blur-sm text-white rounded-3xl rounded-bl-lg p-6 max-w-2xl mx-auto shadow-lg border border-white/20">
-            <div className="flex items-center mb-3">
-              <span className="text-3xl mr-3">😴</span>
-              <span className="font-bold text-xl">Luna the Dream Keeper</span>
+        <div className="mb-12">
+          <div className="bg-gradient-to-r from-indigo-400 to-purple-400 text-white rounded-3xl rounded-bl-lg p-8 max-w-4xl mx-auto shadow-2xl border-4 border-white/30">
+            <div className="flex items-center mb-6">
+              <span className="text-6xl mr-6 bounce-animation">🌙</span>
+              <span className="font-black text-3xl">Sleepy MurfKiddo</span>
             </div>
-            <p className="text-lg leading-relaxed opacity-90">{aiMessage}</p>
+            <p className="text-2xl leading-relaxed font-bold">{aiMessage}</p>
           </div>
         </div>
 
-        {/* Welcome State */}
-        {bedtimeState === 'welcome' && (
-          <div className="text-center mb-8">
-            <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-8 shadow-lg border border-white/20 mb-8">
-              <div className="text-6xl mb-6 animate-pulse">💤</div>
-              <h2 className="text-2xl font-bold text-white mb-4">Time for Peaceful Dreams</h2>
-              <p className="text-purple-200 mb-6">Let me help you drift off to the most wonderful sleep...</p>
-              <button 
-                onClick={() => setBedtimeState('content_select')}
-                className="bg-gradient-to-r from-purple-500/80 to-pink-500/80 backdrop-blur-sm text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all border border-white/20"
-              >
-                Ready for Bedtime 🌙
-              </button>
+        {/* Error Message - Kid Friendly */}
+        {error && (
+          <div className="kid-error mb-8 max-w-2xl mx-auto">
+            <div className="flex items-center mb-4">
+              <span className="text-4xl mr-4">😊</span>
+              <span className="text-2xl font-black">No Problem!</span>
             </div>
+            <p className="text-xl font-bold">{error}</p>
           </div>
         )}
 
-        {/* Content Selection */}
-        {bedtimeState === 'content_select' && (
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-white text-center mb-6">
-              <Heart className="inline w-8 h-8 mr-2 text-pink-300" />
-              What Would Help You Sleep Tonight?
+        {/* Bedtime Content Menu */}
+        {conversationState === 'menu' && (
+          <div className="space-y-12">
+            <h2 className="text-3xl font-black text-purple-800 text-center mb-8">
+              <Moon className="inline w-10 h-10 mr-3 text-indigo-500 bounce-animation" />
+              Pick Your Bedtime Magic! 🌟
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {bedtimeContentTypes.map((content) => (
-                <button
-                  key={content.id}
-                  onClick={() => selectContentType(content.id, content.action)}
-                  className={`bg-gradient-to-r ${content.color} backdrop-blur-sm hover:shadow-xl transform hover:scale-105 text-white rounded-3xl p-6 transition-all duration-200 shadow-lg border border-white/20`}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {bedtimeContent.map((content, index) => (
+            <button
+                  key={index}
+                  onClick={() => startBedtimeContent(content.type)}
+                  className="bg-white/90 rounded-3xl p-8 shadow-lg border-4 border-white/70 hover:border-indigo-300 transform hover:scale-105 transition-all text-center"
                 >
-                  <div className="text-4xl mb-3">{content.icon}</div>
-                  <h3 className="font-bold text-xl mb-2">{content.name}</h3>
-                  <p className="text-sm opacity-90">{content.description}</p>
+                  <div className={`w-24 h-24 bg-gradient-to-r ${content.color} rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg`}>
+                    <span className="text-5xl">{content.emoji}</span>
+                  </div>
+                  <h3 className="text-2xl font-black text-purple-800 mb-3">{content.name}</h3>
+                  <p className="text-lg text-purple-600 font-bold">{content.description}</p>
+            </button>
+          ))}
+        </div>
+
+            {/* Custom Request Section */}
+            <div className="text-center">
+              <p className="text-xl text-purple-600 font-bold mb-6">
+                Or tell me something special that would help you sleep! 💫
+              </p>
+              <div className="flex flex-col md:flex-row gap-4 justify-center items-center">
+                <button
+                  onClick={startListening}
+                  className="kid-button"
+                >
+                  <Mic className="w-8 h-8 mr-4" />
+                  Tell Me! 🎤
                 </button>
-              ))}
+                <button
+                  onClick={() => setShowTextInput(true)}
+                  className="kid-button"
+                >
+                  <Keyboard className="w-8 h-8 mr-4" />
+                  Type It! ⌨️
+                </button>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Input Mode Toggle */}
-        {bedtimeState === 'personalizing' && (
-          <div className="text-center mb-4">
+        {/* Input Mode Toggle - During Listening */}
+        {(conversationState === 'listening' || conversationState === 'content_ready') && (
+          <div className="text-center mb-8">
             <button
               onClick={toggleInputMode}
-              className="bg-gradient-to-r from-indigo-400/80 to-purple-400/80 backdrop-blur-sm text-white px-6 py-2 rounded-full font-medium hover:shadow-lg transition-all flex items-center space-x-2 mx-auto border border-white/20"
+              className="kid-toggle"
             >
-              {showTextInput ? <Mic className="w-4 h-4" /> : <Keyboard className="w-4 h-4" />}
-              <span>{showTextInput ? "Switch to Voice" : "Switch to Typing"}</span>
+              {showTextInput ? <Mic className="w-8 h-8" /> : <Keyboard className="w-8 h-8" />}
+              <span className="text-xl font-black">
+                {showTextInput ? "🎤 Switch to Voice!" : "⌨️ Switch to Typing!"}
+              </span>
             </button>
           </div>
         )}
 
-        {/* Voice Input Section */}
-        {bedtimeState === 'personalizing' && !showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-8 shadow-lg border border-white/20">
+        {/* Voice Input Section - Much Bigger */}
+        {conversationState === 'listening' && !showTextInput && (
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              {/* Giant Microphone Button */}
               <button
                 onClick={isListening ? stopListening : startListening}
-                className={`w-32 h-32 mx-auto mb-6 rounded-full flex items-center justify-center text-white font-bold text-2xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 backdrop-blur-sm border border-white/20 ${
+                disabled={isProcessing}
+                className={`kid-mic-button mx-auto mb-8 disabled:opacity-50 disabled:cursor-not-allowed ${
                   isListening 
-                    ? 'bg-gradient-to-r from-pink-400/80 to-red-400/80 animate-pulse' 
-                    : 'bg-gradient-to-r from-indigo-400/80 to-purple-400/80'
+                    ? 'bg-gradient-to-r from-red-400 to-pink-500 pulse-animation' 
+                    : 'bg-gradient-to-r from-indigo-400 to-purple-400 wiggle-animation'
                 }`}
               >
-                {isListening ? <MicOff className="w-16 h-16" /> : <Mic className="w-16 h-16" />}
+                {isListening ? <MicOff className="w-24 h-24" /> : <Mic className="w-24 h-24" />}
               </button>
-              
+
+              {/* Listening Status - Kid Friendly */}
               {isListening && (
-                <div className="mb-4">
-                  <div className="text-2xl font-bold text-indigo-300 mb-2">
-                    🎤 Listening gently... {listeningCountdown}s
-                  </div>
-                  <div className="bg-indigo-400/20 rounded-2xl p-3 border border-white/10">
-                    <p className="text-indigo-200 font-medium">Whisper your name and favorite things...</p>
+                <div className="mb-6">
+                  <div className="bg-gradient-to-r from-purple-200 to-blue-200 rounded-3xl p-6 shadow-lg">
+                    <p className="text-2xl font-black text-purple-800 mb-4">
+                      🎧 I'm Listening Softly! ({listeningCountdown}s)
+                    </p>
+                    <div className="bg-white rounded-full h-6 overflow-hidden">
+                      <div 
+                        className="kid-progress h-full"
+                        style={{ width: `${(listeningCountdown / 20) * 100}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
+
+              {/* What the kid is saying */}
+              {(transcript || interimTranscript) && (
+                <div className="bg-gradient-to-r from-blue-200 to-purple-200 rounded-3xl p-6 mb-6 shadow-lg border-4 border-blue-300">
+                  <p className="text-xl font-black text-blue-800 mb-2">
+                    🗣️ Your Bedtime Wish:
+                  </p>
+                  <p className="text-2xl font-bold text-blue-900">
+                    "{transcript || interimTranscript}"
+                  </p>
+                </div>
+              )}
               
-              <p className="text-lg text-purple-200 font-medium mb-4">
-                {isListening ? "🌙 I'm listening softly..." : "👆 Whisper to me..."}
+              <p className="text-xl text-purple-600 font-bold">
+                💡 Try: "A story about sleepy animals" or "Soft music please"
               </p>
-              
-              {interimTranscript && (
-                <div className="bg-yellow-400/20 rounded-2xl p-4 mb-4 border border-yellow-300/20">
-                  <p className="text-yellow-200">
-                    <span className="font-bold">I'm hearing:</span> "{interimTranscript}..."
-                  </p>
-                </div>
-              )}
-              
-              {transcript && (
-                <div className="bg-blue-400/20 rounded-2xl p-4 mb-4 border border-blue-300/20">
-                  <p className="text-blue-200">
-                    <span className="font-bold">You whispered:</span> "{transcript}"
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         )}
 
-        {/* Text Input Section */}
-        {bedtimeState === 'personalizing' && showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-8 shadow-lg border border-white/20">
-              <div className="flex items-center space-x-4 max-w-lg mx-auto">
+        {/* Text Input Section - Much Bigger */}
+        {(conversationState === 'listening' || showTextInput) && showTextInput && (
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              <div className="flex flex-col space-y-6">
                 <input
                   type="text"
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleTextInput()}
-                  placeholder="What's your name? What do you love?"
-                  className="flex-1 px-6 py-4 text-lg rounded-2xl bg-white/20 border border-white/30 focus:border-white/50 focus:outline-none text-white placeholder-white/60"
+                  placeholder="What would help you have sweet dreams?"
+                  className="kid-input"
+                  disabled={isProcessing}
                 />
                 <button
                   onClick={handleTextInput}
-                  disabled={!textInput.trim()}
-                  className="bg-gradient-to-r from-indigo-400/80 to-purple-400/80 backdrop-blur-sm text-white px-6 py-4 rounded-2xl font-bold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all border border-white/20"
+                  disabled={!textInput.trim() || isProcessing}
+                  className="kid-button mx-auto"
                 >
-                  <Wind className="w-6 h-6" />
+                  <Sparkles className="w-8 h-8 mr-4" />
+                  Create Bedtime Magic! 🌙
                 </button>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* Loading State */}
-        {bedtimeState === 'processing' && (
-          <div className="text-center mb-8">
-            <LoadingSpinner />
-            <p className="text-purple-200 mt-4 text-lg font-medium">
-              🌙 Creating peaceful dreams just for you... ✨
-            </p>
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && (
-          <div className="bg-red-400/20 backdrop-blur-sm border border-red-300/30 rounded-3xl p-6 mb-8">
-            <div className="text-center">
-              <span className="text-4xl mb-2 block">😔</span>
-              <p className="text-red-200 font-semibold text-lg">{error}</p>
-              <div className="mt-4 space-x-4">
-                <button 
-                  onClick={() => setError(null)}
-                  className="bg-gradient-to-r from-indigo-400/80 to-purple-400/80 backdrop-blur-sm text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all border border-white/20"
-                >
-                  Try Again
-                </button>
-                {!showTextInput && bedtimeState === 'personalizing' && (
-                  <button 
-                    onClick={toggleInputMode}
-                    className="bg-gradient-to-r from-blue-400/80 to-cyan-400/80 backdrop-blur-sm text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all border border-white/20"
-                  >
-                    Type Instead
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Bedtime Content Display */}
-        {currentResponse && bedtimeState === 'content_ready' && (
-          <div className="space-y-6 mb-8">
-            <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-8 shadow-lg border border-white/20">
-              <div className="text-center mb-6">
-                <h2 className="text-3xl font-bold text-white mb-4">🌟 Sweet Dreams Content 🌟</h2>
-                <div className="bg-gradient-to-r from-indigo-300/20 to-purple-300/20 rounded-2xl p-4 mb-6 border border-white/10">
-                  <h3 className="text-lg font-semibold text-indigo-200 mb-2">
-                    {bedtimeContentTypes.find(c => c.id === selectedContentType)?.name}
-                    {currentResponse.childName && ` for ${currentResponse.childName}`}
-                  </h3>
-                </div>
-              </div>
-
-              {/* Content Text */}
-              <div className="bg-gradient-to-r from-blue-400/10 to-purple-400/10 rounded-2xl p-6 mb-6 max-h-64 overflow-y-auto border border-white/10">
-                <p className="text-white/90 leading-relaxed text-lg whitespace-pre-line">{currentResponse.responseText}</p>
-              </div>
-
-              <AudioPlayer 
-                title={`${bedtimeContentTypes.find(c => c.id === selectedContentType)?.name || 'Bedtime Content'}${currentResponse.childName ? ` for ${currentResponse.childName}` : ''}`}
-                audioUrl={currentResponse.audioUrl}
-              />
-              
-              <div className="text-center mt-6 space-x-4">
-                <button 
-                  onClick={startNewContent}
-                  className="bg-gradient-to-r from-purple-500/80 to-pink-500/80 backdrop-blur-sm text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all border border-white/20"
-                >
-                  More Sweet Dreams 💤
-                </button>
-                <button 
-                  onClick={backToWelcome}
-                  className="bg-gradient-to-r from-indigo-500/80 to-blue-500/80 backdrop-blur-sm text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all border border-white/20"
-                >
-                  Back to Dreamland 🌙
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Gentle Sleep Tips */}
-        {(bedtimeState === 'welcome' || bedtimeState === 'content_select') && (
-          <div className="text-center mt-8">
-            <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-6 border border-white/20">
-              <p className="text-purple-200 text-sm mb-2">
-                💤 Bedtime tip: Get comfortable, close your eyes, and let your imagination drift...
+              <p className="text-xl text-purple-600 font-bold mt-6">
+                💡 Try: "Counting stars" or "A lullaby about the moon"
               </p>
-              <div className="flex justify-center space-x-2">
-                {[...Array(5)].map((_, i) => (
-                  <Star
-                    key={i}
-                    className="w-4 h-4 text-yellow-300/60 fill-current animate-pulse"
-                    style={{ animationDelay: `${i * 0.3}s` }}
-                  />
-                ))}
-              </div>
             </div>
           </div>
+        )}
+
+        {/* Loading State - Fun for Kids */}
+        {conversationState === 'creating' && (
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-2xl mx-auto">
+              <div className="text-8xl mb-6 kid-loading">🌙</div>
+              <p className="text-3xl font-black text-purple-600 mb-4">
+                ✨ Creating Bedtime Magic! ✨
+              </p>
+              <p className="text-xl font-bold text-purple-500">
+                🌟 Sprinkling sleepy dust... 💫 Adding peaceful dreams... 🌙 Almost ready!
+              </p>
+              <LoadingSpinner />
+            </div>
+          </div>
+        )}
+
+        {/* Bedtime Content Ready - Celebration */}
+        {conversationState === 'content_ready' && currentResponse && (
+          <div className="space-y-8">
+            {/* Celebration Header */}
+            <div className="text-center">
+              <div className="kid-success max-w-3xl mx-auto">
+                <div className="text-6xl mb-4 bounce-animation">🌙</div>
+                <h2 className="text-4xl font-black text-green-800 mb-4">
+                  YOUR BEDTIME MAGIC IS READY! 
+                </h2>
+                <p className="text-2xl font-bold text-green-700">
+                  Listen and let it carry you to dreamland! 💫
+                </p>
+              </div>
+            </div>
+
+            {/* Audio Player */}
+            <div className="max-w-4xl mx-auto">
+              <AudioPlayer 
+                audioUrl={currentResponse.audioUrl} 
+                title={currentResponse.title || `Bedtime: ${currentResponse.contentType}`}
+                autoPlay={true}
+              />
+            </div>
+
+            {/* Bedtime Content Display */}
+            <div className="kid-message-box max-w-4xl mx-auto">
+              <h3 className="text-3xl font-black text-purple-800 mb-6">🌙 {currentResponse.title || currentResponse.contentType}</h3>
+              <div className="text-xl leading-relaxed text-purple-700 font-semibold">
+                {currentResponse.responseText}
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="text-center space-y-6">
+              <button
+                onClick={continueListening}
+                className="kid-button mr-4"
+              >
+                <Star className="w-8 h-8 mr-4" />
+                More Bedtime Magic! ✨
+              </button>
+              <button
+                onClick={resetConversation}
+                className="kid-button"
+              >
+                <Moon className="w-8 h-8 mr-4" />
+                Sweet Dreams! 🌙
+              </button>
+            </div>
+        </div>
         )}
       </div>
     </div>

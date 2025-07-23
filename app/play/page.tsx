@@ -1,9 +1,11 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Mic, MicOff, Trophy, Star, Gamepad2, Brain, Keyboard, RefreshCw } from "lucide-react"
+import { Mic, MicOff, Trophy, Star, Gamepad2, Brain, Keyboard, RefreshCw, Heart } from "lucide-react"
 import AudioPlayer from "@/components/audio-player"
 import LoadingSpinner from "@/components/loading-spinner"
+import UserPreferencesManager from "@/lib/user-preferences"
+import KidAchievements from "@/components/kid-achievements"
 
 interface GameResponse {
   success: boolean
@@ -39,213 +41,180 @@ export default function PlayMode() {
   const [gameState, setGameState] = useState<'menu' | 'playing' | 'processing' | 'response_ready'>('menu')
   const [currentResponse, setCurrentResponse] = useState<GameResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [isProcessing, setIsProcessing] = useState(false)
   const [recognition, setRecognition] = useState<SpeechRecognition | null>(null)
   const [showTextInput, setShowTextInput] = useState(false)
   const [textInput, setTextInput] = useState("")
   const [selectedGameType, setSelectedGameType] = useState<string>("")
-  const [listeningCountdown, setListeningCountdown] = useState(15)
+  const [listeningCountdown, setListeningCountdown] = useState(20) // Longer for kids
   const [score, setScore] = useState(0)
   const [gamesPlayed, setGamesPlayed] = useState(0)
   const [currentGameContext, setCurrentGameContext] = useState("")
-  const [aiMessage, setAiMessage] = useState("Hey there! I'm your game buddy! 🎮 Pick a fun game to play together - I love riddles, word games, and trivia!")
+  const [aiMessage, setAiMessage] = useState("Hey there, super player! 🎮✨ I'm your fun game buddy! Let's play amazing games together! Pick a game below or tell me what you want to play - riddles, word games, trivia, or anything fun! What sounds AWESOME to you?")
 
   const countdownRef = useRef<number | undefined>(undefined)
+  const listeningTimeoutRef = useRef<number | undefined>(undefined)
   const restartAttempts = useRef(0)
 
+  // Set up speech recognition with kid-friendly settings
   useEffect(() => {
-    // Initialize speech recognition
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition()
-        recognition.continuous = true
-        recognition.interimResults = true
-        
-        recognition.onresult = (event) => {
-          let finalTranscript = ''
-          let interimTranscript = ''
-          
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript.trim()
-            if (event.results[i].isFinal) {
-              finalTranscript += transcript
-            } else {
-              interimTranscript += transcript
-            }
-          }
-          
-          if (interimTranscript) {
-            setInterimTranscript(interimTranscript)
-          }
-          
-          if (finalTranscript && finalTranscript.length > 1) {
-            console.log("Game response:", finalTranscript)
-            setTranscript(finalTranscript)
-            stopListening()
-            handleGameResponse(finalTranscript)
-          }
-        }
-        
-        recognition.onerror = (event) => {
-          console.error('Speech recognition error:', event.error)
-          setIsListening(false)
-          clearCountdown()
-          
-          if (event.error === 'not-allowed') {
-            setError("I need microphone permission to play voice games! 🎤 Please allow microphone access.")
-            setShowTextInput(true)
-          } else if (event.error === 'no-speech') {
-            if (restartAttempts.current < 2) {
-              restartAttempts.current++
-              window.setTimeout(() => {
-                if (gameState === 'playing') {
-                  startListening()
-                }
-              }, 500)
-            } else {
-              setError("I'm having trouble hearing you. Try speaking louder, or use typing! 📢")
-              setShowTextInput(true)
-            }
-          } else if (event.error === 'aborted') {
-            // Normal stop, don't show error
-          } else {
-            setError("Voice recognition isn't working well. Let's try typing instead! ⌨️")
-            setShowTextInput(true)
-          }
-        }
-        
-        recognition.onstart = () => {
-          console.log("Speech recognition started")
-          setIsListening(true)
-          setError(null)
-          setInterimTranscript("")
-          restartAttempts.current = 0
-          startCountdown()
-        }
-        
-        recognition.onend = () => {
-          console.log("Speech recognition ended")
-          setIsListening(false)
-          clearCountdown()
-          
-          if (gameState === 'playing' && restartAttempts.current < 3) {
-            restartAttempts.current++
-            window.setTimeout(() => {
-              if (gameState === 'playing') {
-                console.log("Restarting recognition, attempt:", restartAttempts.current)
-                recognition.start()
-              }
-            }, 300)
-          }
-        }
-        
-        setRecognition(recognition)
-      } else {
-        setShowTextInput(true)
-        setAiMessage("Hi! Your browser doesn't support voice, but you can type to play games with me! 💬")
+      const recognition = new SpeechRecognition()
+      
+      // More patient settings for children
+      recognition.continuous = true
+      recognition.interimResults = true
+      if ('lang' in recognition) {
+        recognition.lang = 'en-US'
       }
+
+      recognition.onstart = () => {
+        console.log("Speech recognition started")
+        setIsListening(true)
+        setError(null)
+        setListeningCountdown(20) // 20 seconds for kids
+        startCountdown()
+      }
+
+      recognition.onresult = (event) => {
+        let interimTranscript = ''
+        let finalTranscript = ''
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript
+          } else {
+            interimTranscript += event.results[i][0].transcript
+          }
+        }
+
+        setTranscript(finalTranscript)
+        setInterimTranscript(interimTranscript)
+
+        // Auto-submit when we get a complete sentence
+        if (finalTranscript.trim()) {
+          clearTimeout(listeningTimeoutRef.current)
+          listeningTimeoutRef.current = window.setTimeout(() => {
+            if (finalTranscript.trim()) {
+              handleGameAction(finalTranscript.trim())
+              recognition.stop()
+            }
+          }, 2000) as unknown as number // Wait 2 seconds for more speech
+        }
+      }
+
+      recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error)
+        
+        if (event.error === 'no-speech') {
+          // Auto-restart for kids, but with attempts limit
+          if (restartAttempts.current < 3 && gameState === 'playing') {
+            restartAttempts.current++
+            setAiMessage("I didn't hear anything! Let's try again! Press the big microphone and speak clearly! 📢✨")
+            setTimeout(() => {
+              if (!isListening) {
+                startListening()
+              }
+            }, 1000)
+          } else {
+            setError("I'm having trouble hearing you! Try using the typing option instead! 😊")
+            setAiMessage("No problem! Click 'Switch to Typing' and type your answer instead! ⌨️🌟")
+          }
+        } else {
+          setError(`Having trouble with voice recognition. Let's try typing instead! 😊`)
+          setAiMessage("Let's try typing your answer instead! Click the typing button! 💻✨")
+        }
+        
+        setIsListening(false)
+        setGameState('playing')
+        clearCountdown()
+      }
+
+      recognition.onend = () => {
+        console.log("Speech recognition ended")
+        setIsListening(false)
+        clearCountdown()
+        
+        // If we got a transcript, process it
+        if (transcript.trim()) {
+          handleGameAction(transcript.trim())
+        }
+      }
+
+      setRecognition(recognition)
     }
-  }, [gameState])
+
+    return () => {
+      clearCountdown()
+      clearTimeout(listeningTimeoutRef.current)
+    }
+  }, [transcript, gameState])
+
+  const startCountdown = () => {
+    clearCountdown()
+    let timeLeft = 20
+    setListeningCountdown(timeLeft)
+    
+    countdownRef.current = setInterval(() => {
+      timeLeft -= 1
+      setListeningCountdown(timeLeft)
+      
+      if (timeLeft <= 0) {
+        clearCountdown()
+        if (recognition) {
+          recognition.stop()
+        }
+      }
+    }, 1000) as unknown as number
+  }
 
   const clearCountdown = () => {
     if (countdownRef.current) {
-      window.clearInterval(countdownRef.current)
+      clearInterval(countdownRef.current)
       countdownRef.current = undefined
     }
   }
 
-  const startCountdown = () => {
-    setListeningCountdown(15)
-    
-    countdownRef.current = window.setInterval(() => {
-      setListeningCountdown((prev) => {
-        if (prev <= 1) {
-          stopListening()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-  }
-
   const startListening = () => {
-    if (recognition) {
+    if (recognition && !isListening) {
+      setError(null)
       setTranscript("")
       setInterimTranscript("")
+      setAiMessage("I'm listening super carefully! Give me your awesome answer! 🎧✨")
       restartAttempts.current = 0
-      
-      try {
-        recognition.start()
-      } catch (error) {
-        console.error("Failed to start recognition:", error)
-        setError("Couldn't start voice recognition. Let's try typing instead! ⌨️")
-        setShowTextInput(true)
-      }
-    } else {
-      setShowTextInput(true)
-      setError("Voice not available - but you can type! 💬")
+      recognition.start()
     }
   }
 
   const stopListening = () => {
     if (recognition && isListening) {
       recognition.stop()
+      clearCountdown()
+      clearTimeout(listeningTimeoutRef.current)
+      setAiMessage("Ready for your next amazing move! 🌟")
     }
-    setIsListening(false)
-    clearCountdown()
   }
 
   const handleTextInput = () => {
     if (textInput.trim()) {
-      handleGameResponse(textInput.trim())
+      handleGameAction(textInput.trim())
       setTextInput("")
     }
   }
 
-  const startNewGame = async (gameType: string) => {
+  const startGame = (gameType: string) => {
     setSelectedGameType(gameType)
     setGameState('processing')
-    setError(null)
-    setAiMessage("Getting a fun game ready for you... 🎲")
-    clearCountdown()
-    
-    try {
-      const response = await fetch('/api/play-game', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'start_game',
-          gameType: gameType,
-        }),
-      })
-
-      const data: GameResponse = await response.json()
-
-      if (data.success) {
-        setCurrentResponse(data)
-        setCurrentGameContext(data.responseText)
-        setGameState('response_ready')
-        setGamesPlayed(gamesPlayed + 1)
-        setAiMessage("Game ready! 🎉 Listen to the challenge and give me your answer!")
-      } else {
-        setError(data.error || 'Failed to start game')
-        setGameState('menu')
-        setAiMessage("Hmm, I had trouble starting that game. Pick another one to try! 🎮")
-      }
-    } catch (err) {
-      setError('Something went wrong. Please try another game!')
-      setGameState('menu')
-      setAiMessage("Oops! Something went wrong. What game would you like to play? 😊")
-      console.error('Error:', err)
-    }
+    setCurrentGameContext("")
+    setAiMessage(`AWESOME choice! 🎉 Let me set up a super fun ${gameType} game for you! This is going to be AMAZING! ✨`)
+    handleGameAction(`start ${gameType}`)
   }
 
-  const handleGameResponse = async (userResponse: string) => {
-    console.log("Game response received:", userResponse)
+  const handleGameAction = async (action: string) => {
+    console.log("Game action:", action)
     setGameState('processing')
-    setAiMessage("Let me check your answer... 🤔")
+    setIsProcessing(true)
     clearCountdown()
     
     try {
@@ -255,10 +224,9 @@ export default function PlayMode() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          action: 'respond_to_game',
+          action: action,
           gameType: selectedGameType,
-          userResponse: userResponse,
-          gameState: currentGameContext,
+          context: currentGameContext,
         }),
       })
 
@@ -266,32 +234,36 @@ export default function PlayMode() {
 
       if (data.success) {
         setCurrentResponse(data)
-        setCurrentGameContext(data.responseText)
         setGameState('response_ready')
-        setAiMessage("Great response! 🌟 Listen to my feedback and keep playing!")
-      } else {
-        setError(data.error || 'Failed to process your response')
+        setCurrentGameContext(currentGameContext + "\n" + action + "\n" + data.responseText)
+        
+        if (data.action === 'score') {
+          setScore(prev => prev + 1)
+          setAiMessage("🎉 AMAZING JOB! 🎉 You got it right! You're so smart! Want to keep playing or try a different game? 🌟")
+        } else {
+          setAiMessage("Great try! 😊 Here's what happens next in our game! Want to keep playing? 🎮✨")
+        }
+        
+        setGamesPlayed(prev => prev + 1)
+        
+        // Track usage - estimate 10 minutes per game session
+        UserPreferencesManager.trackUsage('Play Mode', 10)
+    } else {
+        setError(data.error || 'Hmm, something went wrong with our game, but that\'s okay!')
         setGameState('playing')
-        setAiMessage("I didn't catch that. Can you try your answer again? 🎮")
+        setAiMessage("Oops! Our game got a little confused, but don't worry! Can you try again or pick a different game? 😊🌈")
       }
+      setIsProcessing(false)
     } catch (err) {
-      setError('Something went wrong. Please try again!')
+      setError('Something went wrong, but let\'s keep playing!')
       setGameState('playing')
-      setAiMessage("Oops! Can you repeat your answer? 😊")
+      setAiMessage("No worries! Sometimes games get a little mixed up. What other fun thing would you like to play? 🌟")
+      setIsProcessing(false)
       console.error('Error:', err)
     }
   }
 
-  const continueGame = () => {
-    setGameState('playing')
-    setCurrentResponse(null)
-    setError(null)
-    setTranscript("")
-    setInterimTranscript("")
-    setAiMessage("I'm listening for your next answer! 👂 You can speak or type your response!")
-  }
-
-  const backToMenu = () => {
+  const resetGame = () => {
     stopListening()
     setGameState('menu')
     setCurrentResponse(null)
@@ -300,10 +272,20 @@ export default function PlayMode() {
     setInterimTranscript("")
     setTextInput("")
     setSelectedGameType("")
+    setCurrentGameContext("")
     setShowTextInput(false)
     restartAttempts.current = 0
-    setCurrentGameContext("")
-    setAiMessage("What game should we play next? I'm ready for more fun! 🎮")
+    setAiMessage("What other SUPER FUN game would you like to play? I have so many awesome games for amazing kids like you! 🎮✨")
+  }
+
+  const continueGame = () => {
+    setGameState('playing')
+    setCurrentResponse(null)
+    setError(null)
+    setTranscript("")
+    setInterimTranscript("")
+    setTextInput("")
+    setAiMessage("What's your next awesome move? I'm so excited to see what you'll do! 🎉")
   }
 
   const toggleInputMode = () => {
@@ -311,277 +293,288 @@ export default function PlayMode() {
     setShowTextInput(!showTextInput)
     setError(null)
     if (!showTextInput) {
-      setAiMessage("Type your answer here! I'm excited to see what you say! ⌨️")
+      setAiMessage("Perfect! Type your amazing answer here! This is going to be so much fun! ⌨️🌟")
     } else {
-      setAiMessage("Press the microphone to tell me your answer! 🎤")
+      setAiMessage("Great! Press the BIG microphone button and tell me your answer out loud! 🎤✨")
     }
   }
 
   const gameTypes = [
     { 
-      id: "riddle", 
       name: "Riddles", 
       emoji: "🧩", 
-      description: "I'll ask you fun riddles to solve!",
+      description: "Brain teasers and fun puzzles!",
       color: "from-purple-400 to-pink-400"
     },
     { 
-      id: "word_game", 
       name: "Word Games", 
-      emoji: "🎯", 
-      description: "Rhyming, spelling, and word fun!",
+      emoji: "📝", 
+      description: "Rhymes, spelling, and word fun!",
       color: "from-blue-400 to-cyan-400"
     },
     { 
-      id: "trivia", 
-      name: "Fun Facts", 
-      emoji: "🌟", 
-      description: "Cool trivia questions about everything!",
+      name: "Trivia", 
+      emoji: "🎯", 
+      description: "Cool questions about everything!",
       color: "from-green-400 to-emerald-400"
     },
     { 
-      id: "guessing_game", 
-      name: "Guessing Games", 
-      emoji: "🤔", 
-      description: "I'm thinking of something... can you guess?",
-      color: "from-yellow-400 to-orange-400"
-    },
-    { 
-      id: "story_game", 
-      name: "Story Building", 
+      name: "Story Games", 
       emoji: "📚", 
-      description: "Let's create a fun story together!",
-      color: "from-red-400 to-pink-400"
+      description: "Create adventures together!",
+      color: "from-orange-400 to-red-400"
     },
     { 
-      id: "math_game", 
       name: "Number Fun", 
       emoji: "🔢", 
-      description: "Fun math puzzles and number games!",
+      description: "Math games that are super fun!",
       color: "from-indigo-400 to-purple-400"
     },
+    { 
+      name: "Animal Quiz", 
+      emoji: "🐾", 
+      description: "Learn about amazing animals!",
+      color: "from-teal-400 to-green-400"
+    }
   ]
 
   return (
-    <div className="min-h-screen px-4 py-8 bg-gradient-to-br from-purple-100 via-pink-50 to-blue-100">
-      <div className="max-w-4xl mx-auto">
-        {/* Friendly Header */}
-        <div className="text-center mb-8">
-          <div className="w-32 h-32 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full flex items-center justify-center mx-auto mb-6 float-animation shadow-lg">
-            <span className="text-6xl">🎮</span>
+    <div className="min-h-screen px-4 py-8 bg-gradient-to-br from-orange-100 via-pink-50 to-purple-100">
+      <div className="max-w-5xl mx-auto">
+        {/* Super Friendly Header */}
+        <div className="text-center mb-12">
+          <div className="w-40 h-40 bg-gradient-to-r from-orange-400 to-red-400 rounded-full flex items-center justify-center mx-auto mb-8 float-animation shadow-2xl">
+            <span className="text-8xl">🎮</span>
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-purple-800 mb-4">Let's Play Games!</h1>
-          
-          {/* Score Display */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 max-w-md mx-auto shadow-lg border-2 border-yellow-200">
-            <div className="flex items-center justify-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <Trophy className="w-6 h-6 text-yellow-500" />
-                <span className="font-bold text-purple-800">Games Played: {gamesPlayed}</span>
-              </div>
-              <div className="flex space-x-1">
-                {[...Array(3)].map((_, i) => (
-                  <Star key={i} className={`w-5 h-5 ${i < Math.min(gamesPlayed, 3) ? "text-yellow-400 fill-current" : "text-gray-300"}`} />
-                ))}
-              </div>
-            </div>
-          </div>
+          <h1 className="text-5xl md:text-7xl font-black text-purple-800 mb-6 rainbow-text">
+            Game Time! 🎉
+          </h1>
+        </div>
+
+        {/* Kid Achievements System */}
+        <div className="mb-12">
+          <KidAchievements 
+            mode="Play Mode"
+            currentStats={{
+              gamesPlayed: gamesPlayed
+            }}
+          />
         </div>
 
         {/* AI Game Master Speech Bubble */}
-        <div className="mb-8">
-          <div className="bg-gradient-to-r from-purple-400 to-pink-400 text-white rounded-3xl rounded-bl-lg p-6 max-w-2xl mx-auto shadow-lg">
-            <div className="flex items-center mb-3">
-              <span className="text-3xl mr-3">🎲</span>
-              <span className="font-bold text-xl">Game Master MurfKiddo</span>
+        <div className="mb-12">
+          <div className="bg-gradient-to-r from-orange-400 to-red-400 text-white rounded-3xl rounded-bl-lg p-8 max-w-4xl mx-auto shadow-2xl border-4 border-white/30">
+            <div className="flex items-center mb-6">
+              <span className="text-6xl mr-6 bounce-animation">🎮</span>
+              <span className="font-black text-3xl">Game Master MurfKiddo</span>
             </div>
-            <p className="text-lg leading-relaxed">{aiMessage}</p>
+            <p className="text-2xl leading-relaxed font-bold">{aiMessage}</p>
           </div>
         </div>
 
-        {/* Game Selection Menu */}
+        {/* Error Message - Kid Friendly */}
+        {error && (
+          <div className="kid-error mb-8 max-w-2xl mx-auto">
+            <div className="flex items-center mb-4">
+              <span className="text-4xl mr-4">😊</span>
+              <span className="text-2xl font-black">No Problem!</span>
+            </div>
+            <p className="text-xl font-bold">{error}</p>
+          </div>
+        )}
+
+        {/* Game Menu */}
         {gameState === 'menu' && (
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-purple-800 text-center mb-6">
-              <Gamepad2 className="inline w-8 h-8 mr-2 text-purple-600" />
-              Choose Your Game!
+          <div className="space-y-12">
+            <h2 className="text-3xl font-black text-purple-800 text-center mb-8">
+              <Gamepad2 className="inline w-10 h-10 mr-3 text-orange-500 bounce-animation" />
+              Pick Your Super Fun Game! 🌟
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {gameTypes.map((game) => (
+              {gameTypes.map((game, index) => (
                 <button
-                  key={game.id}
-                  onClick={() => startNewGame(game.id)}
-                  className={`bg-gradient-to-r ${game.color} hover:shadow-xl transform hover:scale-105 text-white rounded-3xl p-6 transition-all duration-200 shadow-lg`}
+                  key={index}
+                  onClick={() => startGame(game.name)}
+                  className="bg-white/90 rounded-3xl p-8 shadow-lg border-4 border-white/70 hover:border-orange-300 transform hover:scale-105 transition-all text-center"
                 >
-                  <div className="text-4xl mb-3">{game.emoji}</div>
-                  <h3 className="font-bold text-xl mb-2">{game.name}</h3>
-                  <p className="text-sm opacity-90">{game.description}</p>
+                  <div className={`w-24 h-24 bg-gradient-to-r ${game.color} rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg`}>
+                    <span className="text-5xl">{game.emoji}</span>
+                  </div>
+                  <h3 className="text-2xl font-black text-purple-800 mb-3">{game.name}</h3>
+                  <p className="text-lg text-purple-600 font-bold">{game.description}</p>
                 </button>
               ))}
             </div>
           </div>
         )}
 
-        {/* Input Mode Toggle */}
-        {gameState === 'playing' && (
-          <div className="text-center mb-4">
+        {/* Input Mode Toggle - During Game */}
+        {(gameState === 'playing' || gameState === 'response_ready') && (
+          <div className="text-center mb-8">
             <button
               onClick={toggleInputMode}
-              className="bg-gradient-to-r from-indigo-400 to-purple-400 text-white px-6 py-2 rounded-full font-medium hover:shadow-lg transition-all flex items-center space-x-2 mx-auto"
+              className="kid-toggle"
             >
-              {showTextInput ? <Mic className="w-4 h-4" /> : <Keyboard className="w-4 h-4" />}
-              <span>{showTextInput ? "Switch to Voice" : "Switch to Typing"}</span>
+              {showTextInput ? <Mic className="w-8 h-8" /> : <Keyboard className="w-8 h-8" />}
+              <span className="text-xl font-black">
+                {showTextInput ? "🎤 Switch to Voice!" : "⌨️ Switch to Typing!"}
+              </span>
             </button>
-          </div>
+        </div>
         )}
 
-        {/* Voice Input Section */}
+        {/* Voice Input Section - Much Bigger */}
         {gameState === 'playing' && !showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-purple-200">
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              {/* Giant Microphone Button */}
               <button
                 onClick={isListening ? stopListening : startListening}
-                className={`w-32 h-32 mx-auto mb-6 rounded-full flex items-center justify-center text-white font-bold text-2xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 ${
+                disabled={isProcessing}
+                className={`kid-mic-button mx-auto mb-8 disabled:opacity-50 disabled:cursor-not-allowed ${
                   isListening 
-                    ? 'bg-gradient-to-r from-red-400 to-pink-500 animate-pulse' 
-                    : 'bg-gradient-to-r from-purple-400 to-pink-400'
+                    ? 'bg-gradient-to-r from-red-400 to-pink-500 pulse-animation' 
+                    : 'bg-gradient-to-r from-orange-400 to-red-400 wiggle-animation'
                 }`}
               >
-                {isListening ? <MicOff className="w-16 h-16" /> : <Mic className="w-16 h-16" />}
+                {isListening ? <MicOff className="w-24 h-24" /> : <Mic className="w-24 h-24" />}
               </button>
-              
+
+              {/* Listening Status - Kid Friendly */}
               {isListening && (
-                <div className="mb-4">
-                  <div className="text-2xl font-bold text-purple-600 mb-2">
-                    🎤 Listening... {listeningCountdown}s
-                  </div>
-                  <div className="bg-purple-100 rounded-2xl p-3">
-                    <p className="text-purple-700 font-medium">Give me your answer! I'm listening for {listeningCountdown} more seconds...</p>
+              <div className="mb-6">
+                  <div className="bg-gradient-to-r from-green-200 to-blue-200 rounded-3xl p-6 shadow-lg">
+                    <p className="text-2xl font-black text-green-800 mb-4">
+                      🎧 I'm Listening for Your Answer! ({listeningCountdown}s)
+                    </p>
+                    <div className="bg-white rounded-full h-6 overflow-hidden">
+                      <div 
+                        className="kid-progress h-full"
+                        style={{ width: `${(listeningCountdown / 20) * 100}%` }}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
+
+              {/* What the kid is saying */}
+              {(transcript || interimTranscript) && (
+                <div className="bg-gradient-to-r from-blue-200 to-purple-200 rounded-3xl p-6 mb-6 shadow-lg border-4 border-blue-300">
+                  <p className="text-xl font-black text-blue-800 mb-2">
+                    🗣️ Your Answer:
+                  </p>
+                  <p className="text-2xl font-bold text-blue-900">
+                    "{transcript || interimTranscript}"
+                  </p>
+              </div>
+              )}
               
-              <p className="text-lg text-purple-700 font-medium mb-4">
-                {isListening ? "🗣️ Tell me your answer!" : "👆 Press to give your answer!"}
+              <p className="text-xl text-purple-600 font-bold">
+                💡 Think carefully and give me your best answer!
               </p>
-              
-              {interimTranscript && (
-                <div className="bg-yellow-50 rounded-2xl p-4 mb-4">
-                  <p className="text-yellow-800">
-                    <span className="font-bold">I'm hearing:</span> "{interimTranscript}..."
-                  </p>
-                </div>
-              )}
-              
-              {transcript && (
-                <div className="bg-blue-50 rounded-2xl p-4 mb-4">
-                  <p className="text-blue-800">
-                    <span className="font-bold">Your answer:</span> "{transcript}"
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         )}
 
-        {/* Text Input Section */}
+        {/* Text Input Section - Much Bigger */}
         {gameState === 'playing' && showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-purple-200">
-              <div className="flex items-center space-x-4 max-w-lg mx-auto">
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              <div className="flex flex-col space-y-6">
                 <input
                   type="text"
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleTextInput()}
-                  placeholder="Type your answer here..."
-                  className="flex-1 px-6 py-4 text-lg rounded-2xl border-2 border-purple-200 focus:border-purple-400 focus:outline-none"
+                  placeholder="Type your awesome answer here..."
+                  className="kid-input"
+                  disabled={isProcessing}
                 />
-                <button
+                  <button
                   onClick={handleTextInput}
-                  disabled={!textInput.trim()}
-                  className="bg-gradient-to-r from-purple-400 to-pink-400 text-white px-6 py-4 rounded-2xl font-bold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  disabled={!textInput.trim() || isProcessing}
+                  className="kid-button mx-auto"
                 >
-                  <Brain className="w-6 h-6" />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Loading State */}
-        {gameState === 'processing' && (
-          <div className="text-center mb-8">
-            <LoadingSpinner />
-            <p className="text-purple-600 mt-4 text-lg font-medium">
-              🎮 Processing your response... ✨
-            </p>
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && (
-          <div className="bg-red-100 border-2 border-red-300 rounded-3xl p-6 mb-8">
-            <div className="text-center">
-              <span className="text-4xl mb-2 block">😔</span>
-              <p className="text-red-700 font-semibold text-lg">{error}</p>
-              <div className="mt-4 space-x-4">
-                <button 
-                  onClick={() => setError(null)}
-                  className="bg-gradient-to-r from-purple-400 to-pink-400 text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all"
-                >
-                  Keep Playing
-                </button>
-                {!showTextInput && gameState === 'playing' && (
-                  <button 
-                    onClick={toggleInputMode}
-                    className="bg-gradient-to-r from-blue-400 to-cyan-400 text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all"
-                  >
-                    Type Instead
+                  <Brain className="w-8 h-8 mr-4" />
+                  That's My Answer! 🎯
                   </button>
-                )}
               </div>
+              <p className="text-xl text-purple-600 font-bold mt-6">
+                💡 Take your time and think about it!
+              </p>
             </div>
           </div>
         )}
 
-        {/* Game Response Display */}
-        {currentResponse && gameState === 'response_ready' && (
-          <div className="space-y-6 mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-purple-200">
-              <div className="text-center mb-6">
-                <h2 className="text-3xl font-bold text-purple-800 mb-4">🎉 Game Response! 🎉</h2>
-                <div className="bg-gradient-to-r from-purple-100 to-pink-100 rounded-2xl p-4 mb-6">
-                  <h3 className="text-lg font-semibold text-purple-800 mb-2">{gameTypes.find(g => g.id === selectedGameType)?.name}</h3>
+        {/* Loading State - Fun for Kids */}
+        {gameState === 'processing' && (
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-2xl mx-auto">
+              <div className="text-8xl mb-6 kid-loading">🎮</div>
+              <p className="text-3xl font-black text-purple-600 mb-4">
+                ✨ Game Magic Happening! ✨
+              </p>
+              <p className="text-xl font-bold text-purple-500">
+                🎯 Checking your answer... 🎪 Adding more fun... 🎉 Almost ready!
+              </p>
+              <LoadingSpinner />
+            </div>
+            </div>
+          )}
+
+        {/* Game Response Ready */}
+        {gameState === 'response_ready' && currentResponse && (
+          <div className="space-y-8">
+            {/* Audio Player */}
+            <div className="max-w-4xl mx-auto">
+              <AudioPlayer 
+                audioUrl={currentResponse.audioUrl} 
+                title={`Playing: ${currentResponse.gameType}`}
+                autoPlay={true}
+              />
+            </div>
+
+            {/* Game Response Display */}
+            <div className="kid-message-box max-w-4xl mx-auto">
+              <h3 className="text-3xl font-black text-purple-800 mb-6">🎮 {currentResponse.gameType}</h3>
+              <div className="text-xl leading-relaxed text-purple-700 font-semibold">
+                {currentResponse.responseText}
+              </div>
+        </div>
+
+            {/* Score Display */}
+            {score > 0 && (
+              <div className="text-center">
+                <div className="kid-success max-w-2xl mx-auto">
+                  <div className="text-6xl mb-4 bounce-animation">🏆</div>
+                  <h3 className="text-3xl font-black text-green-800 mb-2">
+                    Your Score: {score} Points!
+                  </h3>
+                  <p className="text-xl font-bold text-green-700">
+                    You're doing AMAZING! 🌟
+                  </p>
                 </div>
               </div>
+            )}
 
-              {/* Response Text */}
-              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-2xl p-6 mb-6 max-h-48 overflow-y-auto">
-                <p className="text-gray-700 leading-relaxed text-lg">{currentResponse.responseText}</p>
-              </div>
-
-              <AudioPlayer 
-                title={`Playing: ${gameTypes.find(g => g.id === selectedGameType)?.name}`}
-                audioUrl={currentResponse.audioUrl}
-              />
-              
-              <div className="text-center mt-6 space-x-4">
-                <button 
-                  onClick={continueGame}
-                  className="bg-gradient-to-r from-green-400 to-emerald-400 text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all"
-                >
-                  Keep Playing! 🎮
-                </button>
-                <button 
-                  onClick={backToMenu}
-                  className="bg-gradient-to-r from-purple-400 to-pink-400 text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all"
-                >
-                  New Game! 🎲
-                </button>
-              </div>
+            {/* Action Buttons */}
+            <div className="text-center space-y-6">
+              <button
+                onClick={continueGame}
+                className="kid-button mr-4"
+              >
+                <Star className="w-8 h-8 mr-4" />
+                Keep Playing! 🎯
+              </button>
+            <button
+                onClick={resetGame}
+                className="kid-button"
+              >
+                <RefreshCw className="w-8 h-8 mr-4" />
+                New Game! 🎮
+            </button>
             </div>
-          </div>
+        </div>
         )}
       </div>
     </div>

@@ -5,6 +5,7 @@ import { Mic, MicOff, Send, Volume2, VolumeX, Settings, MessageCircle, Sparkles 
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import AudioPlayer from "@/components/audio-player"
+import UserPreferencesManager from "@/lib/user-preferences"
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -152,6 +153,9 @@ export default function Chat() {
         }
 
         setMessages(prev => [...prev, aiMessage])
+
+        // Track usage - estimate 3 minutes per chat interaction
+        UserPreferencesManager.trackUsage('Chat Mode', 3)
 
         // Auto-play audio if enabled
         if (autoPlayAudio && data.audioUrl) {

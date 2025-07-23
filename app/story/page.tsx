@@ -1,9 +1,11 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Mic, MicOff, Volume2, Keyboard } from "lucide-react"
+import { Mic, MicOff, Volume2, Keyboard, Star, Heart } from "lucide-react"
 import AudioPlayer from "@/components/audio-player"
 import LoadingSpinner from "@/components/loading-spinner"
+import UserPreferencesManager from "@/lib/user-preferences"
+import KidAchievements from "@/components/kid-achievements"
 
 interface StoryResponse {
   success: boolean
@@ -13,24 +15,6 @@ interface StoryResponse {
   error?: string
 }
 
-interface SpeechRecognition {
-  continuous: boolean
-  interimResults: boolean
-  onresult: (event: any) => void
-  onerror: (event: any) => void
-  onstart: () => void
-  onend: () => void
-  start: () => void
-  stop: () => void
-}
-
-declare global {
-  interface Window {
-    SpeechRecognition: new () => SpeechRecognition
-    webkitSpeechRecognition: new () => SpeechRecognition
-  }
-}
-
 export default function StoryMode() {
   const [isListening, setIsListening] = useState(false)
   const [transcript, setTranscript] = useState("")
@@ -38,111 +22,109 @@ export default function StoryMode() {
   const [conversationState, setConversationState] = useState<'greeting' | 'listening' | 'generating' | 'story_ready'>('greeting')
   const [storyData, setStoryData] = useState<StoryResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null)
+  const [recognition, setRecognition] = useState<any>(null)
   const [showTextInput, setShowTextInput] = useState(false)
   const [textInput, setTextInput] = useState("")
-  const [listeningCountdown, setListeningCountdown] = useState(10)
-  const [aiMessage, setAiMessage] = useState("Hi there! I'm your storytelling friend! 🎭 What would you like me to tell you a story about today?")
+  const [listeningCountdown, setListeningCountdown] = useState(20) // Longer for kids
+  const [storiesCreated, setStoriesCreated] = useState(0)
+  const [aiMessage, setAiMessage] = useState("Hi awesome friend! 🌟 I'm your story magic maker! Tell me what you want your story to be about - maybe dragons, princesses, space adventures, or anything you love! What sounds super fun to you?")
   
   const listeningTimeoutRef = useRef<number | undefined>(undefined)
   const countdownRef = useRef<number | undefined>(undefined)
   const restartAttempts = useRef(0)
 
+  // Set up speech recognition with kid-friendly settings
   useEffect(() => {
-    // Initialize speech recognition with better settings
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition()
-        recognition.continuous = true // Keep listening
-        recognition.interimResults = true // Show what's being said in real-time
-        
-        recognition.onresult = (event) => {
-          let finalTranscript = ''
-          let interimTranscript = ''
-          
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript.trim()
-            if (event.results[i].isFinal) {
-              finalTranscript += transcript
-            } else {
-              interimTranscript += transcript
-            }
-          }
-          
-          if (interimTranscript) {
-            setInterimTranscript(interimTranscript)
-          }
-          
-          if (finalTranscript && finalTranscript.length > 3) {
-            console.log("Final transcript:", finalTranscript)
-            setTranscript(finalTranscript)
-            stopListening()
-            handleVoiceInput(finalTranscript)
-          }
-        }
-        
-        recognition.onerror = (event) => {
-          console.error('Speech recognition error:', event.error)
-          setIsListening(false)
-          clearTimeouts()
-          
-          if (event.error === 'not-allowed') {
-            setError("I need microphone permission! 🎤 Please allow microphone access in your browser and try again.")
-            setShowTextInput(true)
-          } else if (event.error === 'no-speech') {
-            // Don't show error for no-speech, just restart listening
-            if (restartAttempts.current < 2) {
-              restartAttempts.current++
-              window.setTimeout(() => {
-                if (conversationState === 'listening') {
-                  startListening()
-                }
-              }, 500)
-            } else {
-              setError("I'm having trouble hearing you. Try speaking a bit louder, or use the typing option! 📢")
-              setShowTextInput(true)
-            }
-          } else if (event.error === 'aborted') {
-            // Normal stop, don't show error
-          } else {
-            setError("Voice recognition isn't working well. Let's try typing instead! ⌨️")
-            setShowTextInput(true)
-          }
-        }
-        
-        recognition.onstart = () => {
-          console.log("Speech recognition started")
-          setIsListening(true)
-          setError(null)
-          setInterimTranscript("")
-          restartAttempts.current = 0
-          startCountdown()
-        }
-        
-        recognition.onend = () => {
-          console.log("Speech recognition ended")
-          setIsListening(false)
-          clearTimeouts()
-          
-          // If we're still in listening state but recognition ended unexpectedly, restart
-          if (conversationState === 'listening' && restartAttempts.current < 3) {
-            restartAttempts.current++
-            window.setTimeout(() => {
-              if (conversationState === 'listening') {
-                console.log("Restarting recognition, attempt:", restartAttempts.current)
-                recognition.start()
-              }
-            }, 300)
-          }
-        }
-        
-        setRecognition(recognition)
-      } else {
-        // No speech recognition support
-        setShowTextInput(true)
-        setAiMessage("Hi! Your browser doesn't support voice, but you can type to me! 💬 What story would you like?")
+      const recognition = new SpeechRecognition()
+      
+      // More patient settings for children
+      recognition.continuous = true
+      recognition.interimResults = true
+      if ('lang' in recognition) {
+        recognition.lang = 'en-US'
       }
+
+      recognition.onstart = () => {
+        console.log("Speech recognition started")
+        setIsListening(true)
+        setError(null)
+        startCountdown()
+      }
+
+      recognition.onresult = (event) => {
+        let finalTranscript = ""
+        let interimTranscript = ""
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript
+          } else {
+            interimTranscript += transcript
+          }
+        }
+
+        if (finalTranscript) {
+          console.log("Final transcript:", finalTranscript)
+          setTranscript(finalTranscript)
+          setInterimTranscript("")
+          handleVoiceInput(finalTranscript)
+        } else {
+          setInterimTranscript(interimTranscript)
+        }
+      }
+
+      recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error)
+        
+        if (event.error === 'no-speech' && restartAttempts.current < 3) {
+          console.log("No speech detected, auto-restarting...")
+          restartAttempts.current++
+          clearTimeouts()
+          setTimeout(() => {
+            if (conversationState === 'listening') {
+              try {
+                recognition.start()
+                setAiMessage("I'm still listening! Take your time and tell me about your story idea! 🎤✨")
+              } catch (err) {
+                console.error("Failed to restart recognition:", err)
+              }
+            }
+          }, 1000)
+        } else {
+          setError("No worries! Let's try a different way to tell me your story idea! 😊")
+          setShowTextInput(true)
+          setIsListening(false)
+          clearTimeouts()
+        }
+      }
+
+      recognition.onend = () => {
+        console.log("Speech recognition ended")
+        setIsListening(false)
+        clearTimeouts()
+        
+        if (conversationState === 'listening' && restartAttempts.current < 3) {
+          restartAttempts.current++
+    setTimeout(() => {
+            if (conversationState === 'listening') {
+              console.log("Auto-restarting recognition, attempt:", restartAttempts.current)
+              try {
+                recognition.start()
+              } catch (err) {
+                console.error("Failed to restart recognition:", err)
+              }
+            }
+          }, 500)
+        }
+      }
+
+      setRecognition(recognition)
+    } else {
+      setShowTextInput(true)
+      setAiMessage("Hi! Let's type your story idea instead! What would you like your story to be about? ⌨️🌟")
     }
   }, [conversationState])
 
@@ -158,7 +140,7 @@ export default function StoryMode() {
   }
 
   const startCountdown = () => {
-    setListeningCountdown(15) // Give kids 15 seconds
+    setListeningCountdown(20) // 20 seconds for kids
     
     countdownRef.current = window.setInterval(() => {
       setListeningCountdown((prev) => {
@@ -176,19 +158,19 @@ export default function StoryMode() {
       setTranscript("")
       setInterimTranscript("")
       setConversationState('listening')
-      setAiMessage("I'm listening! 👂 Tell me what story you'd like... Take your time!")
+      setAiMessage("I'm listening super carefully! 👂✨ Tell me what your story should be about - dragons? princesses? adventures? Anything you want!")
       restartAttempts.current = 0
       
       try {
         recognition.start()
       } catch (error) {
         console.error("Failed to start recognition:", error)
-        setError("Couldn't start voice recognition. Let's try typing instead! ⌨️")
+        setError("Let's try typing your story idea instead! 💕")
         setShowTextInput(true)
       }
     } else {
       setShowTextInput(true)
-      setError("Voice not available - but you can type! 💬")
+      setError("Let's type your amazing story idea! ✨")
     }
   }
 
@@ -210,7 +192,7 @@ export default function StoryMode() {
   const handleVoiceInput = async (input: string) => {
     console.log("Input received:", input)
     setConversationState('generating')
-    setAiMessage("Ooh, that sounds amazing! Let me create a magical story for you... ✨")
+    setAiMessage("WOW! That sounds AMAZING! ✨🎭 I'm creating the most awesome story for you right now... This is going to be SO good!")
     clearTimeouts()
     
     // Determine voice type based on content or randomly for variety
@@ -234,16 +216,20 @@ export default function StoryMode() {
       if (data.success) {
         setStoryData(data)
         setConversationState('story_ready')
-        setAiMessage("Your story is ready! 🌟 Press the play button to hear it, or ask me for another story!")
+        setStoriesCreated(prev => prev + 1)
+        setAiMessage("🎉 YOUR STORY IS READY! 🎉 I made it extra special just for you! Press the big play button to hear it, or tell me about another story you want! 🌟")
+        
+        // Track usage - estimate 8 minutes for a story session
+        UserPreferencesManager.trackUsage('Story Mode', 8)
       } else {
-        setError(data.error || 'Failed to generate story')
+        setError(data.error || 'Oops! Something went wrong, but that\'s okay!')
         setConversationState('greeting')
-        setAiMessage("Hmm, something went wrong. Can you tell me about a different story idea? 🤔")
+        setAiMessage("Hmm, that didn't work, but don't worry! 😊 Can you tell me about a different story idea? Maybe something with animals or adventures?")
       }
     } catch (err) {
-      setError('Something went wrong. Please try again!')
+      setError('Something went wrong, but let\'s try again!')
       setConversationState('greeting')
-      setAiMessage("Oops! Something went wrong. What other story would you like to hear? 😊")
+      setAiMessage("Oops! Let's try again! What other awesome story would you like me to create? 🌈")
       console.error('Error:', err)
     }
   }
@@ -258,7 +244,7 @@ export default function StoryMode() {
     setTextInput("")
     setShowTextInput(false)
     restartAttempts.current = 0
-    setAiMessage("What other amazing story would you like me to tell you? 🎪")
+    setAiMessage("What other AMAZING story would you like me to create for you? I love making new stories! 🎪✨")
   }
 
   const toggleInputMode = () => {
@@ -266,213 +252,213 @@ export default function StoryMode() {
     setShowTextInput(!showTextInput)
     setError(null)
     if (!showTextInput) {
-      setAiMessage("You can type your story idea here! What would you like the story to be about? ⌨️")
+      setAiMessage("Type your super cool story idea here! What should the story be about? ⌨️🌟")
     } else {
-      setAiMessage("Press the microphone to tell me your story idea! 🎤")
+      setAiMessage("Press the big microphone to tell me your story idea! 🎤✨")
     }
   }
 
   return (
     <div className="min-h-screen px-4 py-8 bg-gradient-to-br from-purple-100 via-blue-50 to-pink-100">
-      <div className="max-w-4xl mx-auto">
-        {/* Friendly Header with Character */}
-        <div className="text-center mb-8">
-          <div className="w-32 h-32 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full flex items-center justify-center mx-auto mb-6 float-animation shadow-lg">
-            <span className="text-6xl">🎭</span>
+      <div className="max-w-5xl mx-auto">
+        {/* Super Friendly Header */}
+        <div className="text-center mb-12">
+          <div className="w-40 h-40 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full flex items-center justify-center mx-auto mb-8 float-animation shadow-2xl">
+            <span className="text-8xl">🎭</span>
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-purple-800 mb-4">Your Storytelling Friend!</h1>
+          <h1 className="text-5xl md:text-7xl font-black text-purple-800 mb-6 rainbow-text">
+            Story Magic Time! ✨
+          </h1>
         </div>
 
-        {/* AI Character Speech Bubble */}
-        <div className="mb-8">
-          <div className="bg-gradient-to-r from-green-400 to-emerald-400 text-white rounded-3xl rounded-bl-lg p-6 max-w-2xl mx-auto shadow-lg">
-            <div className="flex items-center mb-3">
-              <span className="text-3xl mr-3">🤖</span>
-              <span className="font-bold text-xl">Story Friend</span>
+        {/* Kid Achievements System */}
+        <div className="mb-12">
+          <KidAchievements 
+            mode="Story Mode"
+            currentStats={{
+              storiesCreated: storiesCreated
+            }}
+              />
             </div>
-            <p className="text-lg leading-relaxed">{aiMessage}</p>
+
+        {/* AI Story Friend Speech Bubble */}
+        <div className="mb-12">
+          <div className="bg-gradient-to-r from-green-400 to-emerald-400 text-white rounded-3xl rounded-bl-lg p-8 max-w-4xl mx-auto shadow-2xl border-4 border-white/30">
+            <div className="flex items-center mb-6">
+              <span className="text-6xl mr-6 bounce-animation">🤖</span>
+              <span className="font-black text-3xl">Your Story Friend</span>
+            </div>
+            <p className="text-2xl leading-relaxed font-bold">{aiMessage}</p>
           </div>
         </div>
 
-        {/* Input Mode Toggle */}
+        {/* Error Message - Kid Friendly */}
+        {error && (
+          <div className="kid-error mb-8 max-w-2xl mx-auto">
+            <div className="flex items-center mb-4">
+              <span className="text-4xl mr-4">😊</span>
+              <span className="text-2xl font-black">No Problem!</span>
+            </div>
+            <p className="text-xl font-bold">{error}</p>
+          </div>
+        )}
+
+        {/* Input Mode Toggle - Bigger and Friendlier */}
         {conversationState !== 'story_ready' && (
-          <div className="text-center mb-4">
+          <div className="text-center mb-8">
             <button
               onClick={toggleInputMode}
-              className="bg-gradient-to-r from-indigo-400 to-purple-400 text-white px-6 py-2 rounded-full font-medium hover:shadow-lg transition-all flex items-center space-x-2 mx-auto"
+              className="kid-toggle"
             >
-              {showTextInput ? <Mic className="w-4 h-4" /> : <Keyboard className="w-4 h-4" />}
-              <span>{showTextInput ? "Switch to Voice" : "Switch to Typing"}</span>
+              {showTextInput ? <Mic className="w-8 h-8" /> : <Keyboard className="w-8 h-8" />}
+              <span className="text-xl font-black">
+                {showTextInput ? "🎤 Switch to Voice!" : "⌨️ Switch to Typing!"}
+              </span>
             </button>
           </div>
         )}
 
-        {/* Voice Input Section */}
+        {/* Voice Input Section - Much Bigger */}
         {conversationState !== 'story_ready' && !showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-purple-200">
-              {/* Big Microphone Button */}
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              {/* Giant Microphone Button */}
               <button
                 onClick={isListening ? stopListening : startListening}
                 disabled={conversationState === 'generating'}
-                className={`w-32 h-32 mx-auto mb-6 rounded-full flex items-center justify-center text-white font-bold text-2xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ${
+                className={`kid-mic-button mx-auto mb-8 disabled:opacity-50 disabled:cursor-not-allowed ${
                   isListening 
-                    ? 'bg-gradient-to-r from-red-400 to-pink-500 animate-pulse' 
-                    : 'bg-gradient-to-r from-blue-400 to-cyan-400'
+                    ? 'bg-gradient-to-r from-red-400 to-pink-500 pulse-animation' 
+                    : 'bg-gradient-to-r from-blue-400 to-cyan-400 wiggle-animation'
                 }`}
               >
-                {isListening ? <MicOff className="w-16 h-16" /> : <Mic className="w-16 h-16" />}
+                {isListening ? <MicOff className="w-24 h-24" /> : <Mic className="w-24 h-24" />}
               </button>
-              
+
+              {/* Listening Status - Kid Friendly */}
               {isListening && (
-                <div className="mb-4">
-                  <div className="text-2xl font-bold text-purple-600 mb-2">
-                    🎤 Listening... {listeningCountdown}s
-                  </div>
-                  <div className="bg-red-100 rounded-2xl p-3">
-                    <p className="text-red-700 font-medium">Speak now! I'm listening for {listeningCountdown} more seconds...</p>
-                  </div>
+                <div className="mb-6">
+                  <div className="bg-gradient-to-r from-green-200 to-blue-200 rounded-3xl p-6 shadow-lg">
+                    <p className="text-2xl font-black text-green-800 mb-4">
+                      🎧 I'm Listening! ({listeningCountdown}s)
+                    </p>
+                    <div className="bg-white rounded-full h-6 overflow-hidden">
+                      <div 
+                        className="kid-progress h-full"
+                        style={{ width: `${(listeningCountdown / 20) * 100}%` }}
+                      />
+          </div>
+        </div>
                 </div>
               )}
-              
-              <p className="text-lg text-purple-700 font-medium mb-4">
-                {isListening ? "🗣️ Say your story idea now!" : "👆 Press the microphone and speak clearly!"}
-              </p>
-              
-              {interimTranscript && (
-                <div className="bg-yellow-50 rounded-2xl p-4 mb-4">
-                  <p className="text-yellow-800">
-                    <span className="font-bold">I'm hearing:</span> "{interimTranscript}..."
+
+              {/* What the kid is saying */}
+              {(transcript || interimTranscript) && (
+                <div className="bg-gradient-to-r from-blue-200 to-purple-200 rounded-3xl p-6 mb-6 shadow-lg border-4 border-blue-300">
+                  <p className="text-xl font-black text-blue-800 mb-2">
+                    🗣️ You said:
                   </p>
-                </div>
-              )}
-              
-              {transcript && (
-                <div className="bg-blue-50 rounded-2xl p-4 mb-4">
-                  <p className="text-blue-800">
-                    <span className="font-bold">You said:</span> "{transcript}"
+                  <p className="text-2xl font-bold text-blue-900">
+                    "{transcript || interimTranscript}"
                   </p>
-                </div>
+              </div>
               )}
-              
-              <p className="text-sm text-purple-600">
-                💡 Try saying: "a dragon who loves pizza" or "space adventure with aliens"
-              </p>
-              <p className="text-xs text-gray-500 mt-2">
-                🔊 Make sure your microphone is working and speak clearly!
+
+              <p className="text-xl text-purple-600 font-bold">
+                💡 Ideas: Dragons, princesses, space, animals, magic, adventures!
               </p>
             </div>
           </div>
         )}
 
-        {/* Text Input Section */}
+        {/* Text Input Section - Much Bigger */}
         {conversationState !== 'story_ready' && showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-purple-200">
-              <div className="flex items-center space-x-4 max-w-lg mx-auto">
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              <div className="flex flex-col space-y-6">
                 <input
                   type="text"
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleTextInput()}
-                  placeholder="Type your story idea here... e.g., magical robot"
-                  className="flex-1 px-6 py-4 text-lg rounded-2xl border-2 border-purple-200 focus:border-purple-400 focus:outline-none"
+                  placeholder="Tell me what your story should be about..."
+                  className="kid-input"
                   disabled={conversationState === 'generating'}
                 />
                 <button
                   onClick={handleTextInput}
                   disabled={!textInput.trim() || conversationState === 'generating'}
-                  className="bg-gradient-to-r from-purple-400 to-pink-400 text-white px-6 py-4 rounded-2xl font-bold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="kid-button mx-auto"
                 >
-                  ✨ Create Story!
+                  <Heart className="w-8 h-8 mr-4" />
+                  Create My Story! ✨
                 </button>
               </div>
-              <p className="text-sm text-purple-600 mt-4">
-                💡 Try: "a unicorn who loves cookies" or "underwater adventure"
+              <p className="text-xl text-purple-600 font-bold mt-6">
+                💡 Try: "A dragon who loves ice cream" or "A princess in space!"
               </p>
             </div>
           </div>
         )}
 
-        {/* Loading State */}
+        {/* Loading State - Fun for Kids */}
         {conversationState === 'generating' && (
-          <div className="text-center mb-8">
-            <LoadingSpinner />
-            <p className="text-purple-600 mt-4 text-lg font-medium">
-              ✨ Creating your magical story... This might take a moment! ✨
-            </p>
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-2xl mx-auto">
+              <div className="text-8xl mb-6 kid-loading">🎭</div>
+              <p className="text-3xl font-black text-purple-600 mb-4">
+                ✨ Creating Your Amazing Story! ✨
+              </p>
+              <p className="text-xl font-bold text-purple-500">
+                🎪 Adding magic... 🌟 Making it super fun... 🎉 Almost ready!
+              </p>
+              <LoadingSpinner />
+            </div>
           </div>
         )}
 
-        {/* Error State */}
-        {error && (
-          <div className="bg-red-100 border-2 border-red-300 rounded-3xl p-6 mb-8">
+        {/* Story Ready - Celebration */}
+        {conversationState === 'story_ready' && storyData && (
+          <div className="space-y-8">
+            {/* Celebration Header */}
             <div className="text-center">
-              <span className="text-4xl mb-2 block">😔</span>
-              <p className="text-red-700 font-semibold text-lg">{error}</p>
-              <div className="mt-4 space-x-4">
-                <button 
-                  onClick={resetConversation}
-                  className="bg-gradient-to-r from-purple-400 to-pink-400 text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all"
-                >
-                  Try Again
-                </button>
-                {!showTextInput && (
-                  <button 
-                    onClick={toggleInputMode}
-                    className="bg-gradient-to-r from-blue-400 to-cyan-400 text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all"
-                  >
-                    Type Instead
-                  </button>
-                )}
+              <div className="kid-success max-w-3xl mx-auto">
+                <div className="text-6xl mb-4 bounce-animation">🎉</div>
+                <h2 className="text-4xl font-black text-green-800 mb-4">
+                  YOUR STORY IS READY! 
+                </h2>
+                <p className="text-2xl font-bold text-green-700">
+                  I made it extra special just for you! 🌟
+                </p>
               </div>
             </div>
-          </div>
-        )}
 
-        {/* Story Player */}
-        {storyData && conversationState === 'story_ready' && (
-          <div className="space-y-6">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-green-200">
-              <div className="text-center mb-6">
-                <h2 className="text-3xl font-bold text-purple-800 mb-4">🌟 Your Story is Ready! 🌟</h2>
-                <div className="bg-gradient-to-r from-blue-100 to-cyan-100 rounded-2xl p-4 mb-6">
-                  <h3 className="text-xl font-semibold text-blue-800">{storyData.title}</h3>
-                </div>
-              </div>
-
-              {/* Story Text Preview */}
-              <div className="bg-gradient-to-r from-yellow-50 to-orange-50 rounded-2xl p-6 mb-6 max-h-48 overflow-y-auto">
-                <p className="text-gray-700 leading-relaxed text-lg">{storyData.storyText}</p>
-              </div>
-
+            {/* Audio Player */}
+            <div className="max-w-4xl mx-auto">
               <AudioPlayer 
-                title={storyData.title}
-                audioUrl={storyData.audioUrl}
+                audioUrl={storyData.audioUrl} 
+                title={storyData.title} 
+                autoPlay={true}
               />
-              
-              {/* Ask for Another Story */}
-              <div className="text-center mt-6">
-                <button 
-                  onClick={resetConversation}
-                  className="bg-gradient-to-r from-purple-400 to-pink-400 text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all"
-                >
-                  Tell Me Another Story! 🎪
-                </button>
-              </div>
             </div>
 
-            {/* Story Illustrations */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {["🏰", "🐉", "🌟", "⭐"].map((emoji, index) => (
-                <div
-                  key={index}
-                  className="bg-white/80 backdrop-blur-sm rounded-2xl p-6 text-center shadow-lg border-2 border-yellow-200 hover:scale-105 transition-transform"
-                >
-                  <div className="text-4xl mb-2">{emoji}</div>
-                  <p className="text-sm text-purple-600 font-medium">Scene {index + 1}</p>
+            {/* Story Text Display */}
+            <div className="kid-message-box max-w-4xl mx-auto">
+              <h3 className="text-3xl font-black text-purple-800 mb-6">📖 {storyData.title}</h3>
+              <div className="text-xl leading-relaxed text-purple-700 font-semibold">
+                {storyData.storyText}
+              </div>
                 </div>
-              ))}
+
+            {/* Action Buttons */}
+            <div className="text-center space-y-6">
+              <button
+                onClick={resetConversation}
+                className="kid-button"
+              >
+                <Star className="w-8 h-8 mr-4" />
+                Make Another Story! 🎭
+              </button>
             </div>
           </div>
         )}

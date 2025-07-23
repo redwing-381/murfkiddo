@@ -7,7 +7,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!)
 
 export async function POST(request: NextRequest) {
   try {
-    const { action, gameType, userResponse, gameState } = await request.json()
+    const { action, gameType, context } = await request.json()
 
     if (!action) {
       return NextResponse.json({ error: 'Action is required' }, { status: 400 })
@@ -46,9 +46,9 @@ Create the opening game prompt and question. Make it exciting and clear what the
       // Responding to user's game answer
       prompt = `You are a playful game master responding to a child's answer in a ${gameType} game.
 
-Current game context: ${gameState || 'Playing a fun game'}
+Current game context: ${context || 'Playing a fun game'}
 
-The child said: "${userResponse}"
+The child said: "${action}"
 
 Provide an enthusiastic response that:
 - Acknowledges their answer (right, wrong, or creative)

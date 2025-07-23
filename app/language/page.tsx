@@ -1,17 +1,18 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Mic, MicOff, Globe, Volume2, Brain, Keyboard, BookOpen, MessageCircle } from "lucide-react"
+import { Mic, MicOff, Globe, Star, Brain, Keyboard, Heart, Volume2 } from "lucide-react"
 import AudioPlayer from "@/components/audio-player"
 import LoadingSpinner from "@/components/loading-spinner"
+import UserPreferencesManager from "@/lib/user-preferences"
+import KidAchievements from "@/components/kid-achievements"
 
 interface LanguageResponse {
   success: boolean
-  action: string
-  targetLanguage: string
   responseText: string
   audioUrl: string
-  learningMode: string
+  language: string
+  lessonType: string
   error?: string
 }
 
@@ -33,167 +34,165 @@ declare global {
   }
 }
 
-export default function LanguageBuddy() {
+export default function LanguageMode() {
   const [isListening, setIsListening] = useState(false)
   const [transcript, setTranscript] = useState("")
   const [interimTranscript, setInterimTranscript] = useState("")
-  const [learningState, setLearningState] = useState<'language_select' | 'mode_select' | 'learning' | 'processing' | 'response_ready'>('language_select')
+  const [conversationState, setConversationState] = useState<'menu' | 'learning' | 'processing' | 'lesson_ready'>('menu')
   const [currentResponse, setCurrentResponse] = useState<LanguageResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [recognition, setRecognition] = useState<SpeechRecognition | null>(null)
   const [showTextInput, setShowTextInput] = useState(false)
   const [textInput, setTextInput] = useState("")
   const [selectedLanguage, setSelectedLanguage] = useState<string>("")
-  const [selectedMode, setSelectedMode] = useState<string>("")
-  const [listeningCountdown, setListeningCountdown] = useState(15)
-  const [wordsLearned, setWordsLearned] = useState(0)
-  const [conversationsCount, setConversationsCount] = useState(0)
-  const [aiMessage, setAiMessage] = useState("¡Hola! Hello! Bonjour! I'm your friendly language buddy! 🌍 I can help you learn any language you want - let's pick one and start our adventure!")
+  const [selectedLessonType, setSelectedLessonType] = useState<string>("")
+  const [listeningCountdown, setListeningCountdown] = useState(20) // Longer for kids
+  const [languagesLearned, setLanguagesLearned] = useState(0)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [aiMessage, setAiMessage] = useState("¡Hola! Bonjour! Ciao! 🌍✨ I'm your language learning buddy! I can teach you AMAZING words and phrases in different languages! Pick a language below or tell me what you want to learn! What sounds super exciting to you?")
 
   const countdownRef = useRef<number | undefined>(undefined)
+  const listeningTimeoutRef = useRef<number | undefined>(undefined)
   const restartAttempts = useRef(0)
 
+  // Set up speech recognition with kid-friendly settings
   useEffect(() => {
-    // Initialize speech recognition
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition()
-        recognition.continuous = true
-        recognition.interimResults = true
-        
-        recognition.onresult = (event) => {
-          let finalTranscript = ''
-          let interimTranscript = ''
-          
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript.trim()
-            if (event.results[i].isFinal) {
-              finalTranscript += transcript
-            } else {
-              interimTranscript += transcript
-            }
-          }
-          
-          if (interimTranscript) {
-            setInterimTranscript(interimTranscript)
-          }
-          
-          if (finalTranscript && finalTranscript.length > 1) {
-            console.log("Language input:", finalTranscript)
-            setTranscript(finalTranscript)
-            stopListening()
-            handleLanguageInput(finalTranscript)
-          }
-        }
-        
-        recognition.onerror = (event) => {
-          console.error('Speech recognition error:', event.error)
-          setIsListening(false)
-          clearCountdown()
-          
-          if (event.error === 'not-allowed') {
-            setError("I need microphone permission to hear you speak! 🎤 Please allow microphone access.")
-            setShowTextInput(true)
-          } else if (event.error === 'no-speech') {
-            if (restartAttempts.current < 2) {
-              restartAttempts.current++
-              window.setTimeout(() => {
-                if (learningState === 'learning') {
-                  startListening()
-                }
-              }, 500)
-            } else {
-              setError("I'm having trouble hearing you. Try speaking louder, or use typing! 📢")
-              setShowTextInput(true)
-            }
-          } else if (event.error === 'aborted') {
-            // Normal stop, don't show error
-          } else {
-            setError("Voice recognition isn't working well. Let's try typing instead! ⌨️")
-            setShowTextInput(true)
-          }
-        }
-        
-        recognition.onstart = () => {
-          console.log("Speech recognition started")
-          setIsListening(true)
-          setError(null)
-          setInterimTranscript("")
-          restartAttempts.current = 0
-          startCountdown()
-        }
-        
-        recognition.onend = () => {
-          console.log("Speech recognition ended")
-          setIsListening(false)
-          clearCountdown()
-          
-          if (learningState === 'learning' && restartAttempts.current < 3) {
-            restartAttempts.current++
-            window.setTimeout(() => {
-              if (learningState === 'learning') {
-                console.log("Restarting recognition, attempt:", restartAttempts.current)
-                recognition.start()
-              }
-            }, 300)
-          }
-        }
-        
-        setRecognition(recognition)
-      } else {
-        setShowTextInput(true)
-        setAiMessage("Hi! Your browser doesn't support voice, but you can type to learn languages with me! 💬")
+      const recognition = new SpeechRecognition()
+      
+      // More patient settings for children
+      recognition.continuous = true
+      recognition.interimResults = true
+      if ('lang' in recognition) {
+        recognition.lang = 'en-US'
       }
+
+      recognition.onstart = () => {
+        console.log("Speech recognition started")
+        setIsListening(true)
+        setError(null)
+        setListeningCountdown(20) // 20 seconds for kids
+        startCountdown()
+      }
+
+      recognition.onresult = (event) => {
+        let interimTranscript = ''
+        let finalTranscript = ''
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript
+          } else {
+            interimTranscript += event.results[i][0].transcript
+          }
+        }
+
+        setTranscript(finalTranscript)
+        setInterimTranscript(interimTranscript)
+
+        // Auto-submit when we get a complete sentence
+        if (finalTranscript.trim()) {
+          clearTimeout(listeningTimeoutRef.current)
+          listeningTimeoutRef.current = window.setTimeout(() => {
+            if (finalTranscript.trim()) {
+              handleLanguageInput(finalTranscript.trim())
+              recognition.stop()
+            }
+          }, 2000) as unknown as number // Wait 2 seconds for more speech
+        }
+      }
+
+      recognition.onerror = (event) => {
+        console.error("Speech recognition error:", event.error)
+        
+        if (event.error === 'no-speech') {
+          // Auto-restart for kids, but with attempts limit
+          if (restartAttempts.current < 3 && conversationState === 'learning') {
+            restartAttempts.current++
+            setAiMessage("I didn't hear anything! Let's try again! Press the big microphone and speak clearly! 📢✨")
+            setTimeout(() => {
+              if (!isListening) {
+                startListening()
+              }
+            }, 1000)
+          } else {
+            setError("I'm having trouble hearing you! Try using the typing option instead! 😊")
+            setAiMessage("No problem! Click 'Switch to Typing' and type what you want to learn instead! ⌨️🌟")
+          }
+        } else {
+          setError(`Having trouble with voice recognition. Let's try typing instead! 😊`)
+          setAiMessage("Let's try typing what you want to learn instead! Click the typing button! 💻✨")
+        }
+        
+        setIsListening(false)
+        setConversationState('learning')
+        clearCountdown()
+      }
+
+      recognition.onend = () => {
+        console.log("Speech recognition ended")
+        setIsListening(false)
+        clearCountdown()
+        
+        // If we got a transcript, process it
+        if (transcript.trim()) {
+          handleLanguageInput(transcript.trim())
+        }
+      }
+
+      setRecognition(recognition)
     }
-  }, [learningState])
+
+    return () => {
+      clearCountdown()
+      clearTimeout(listeningTimeoutRef.current)
+    }
+  }, [transcript, conversationState])
+
+  const startCountdown = () => {
+    clearCountdown()
+    let timeLeft = 20
+    setListeningCountdown(timeLeft)
+    
+    countdownRef.current = setInterval(() => {
+      timeLeft -= 1
+      setListeningCountdown(timeLeft)
+      
+      if (timeLeft <= 0) {
+        clearCountdown()
+        if (recognition) {
+          recognition.stop()
+        }
+      }
+    }, 1000) as unknown as number
+  }
 
   const clearCountdown = () => {
     if (countdownRef.current) {
-      window.clearInterval(countdownRef.current)
+      clearInterval(countdownRef.current)
       countdownRef.current = undefined
     }
   }
 
-  const startCountdown = () => {
-    setListeningCountdown(15)
-    
-    countdownRef.current = window.setInterval(() => {
-      setListeningCountdown((prev) => {
-        if (prev <= 1) {
-          stopListening()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-  }
-
   const startListening = () => {
-    if (recognition) {
+    if (recognition && !isListening) {
+      setError(null)
       setTranscript("")
       setInterimTranscript("")
+      setAiMessage("I'm listening super carefully! Tell me what you want to learn! 🎧✨")
       restartAttempts.current = 0
-      
-      try {
-        recognition.start()
-      } catch (error) {
-        console.error("Failed to start recognition:", error)
-        setError("Couldn't start voice recognition. Let's try typing instead! ⌨️")
-        setShowTextInput(true)
-      }
-    } else {
-      setShowTextInput(true)
-      setError("Voice not available - but you can type! 💬")
+      recognition.start()
     }
   }
 
   const stopListening = () => {
     if (recognition && isListening) {
       recognition.stop()
+      clearCountdown()
+      clearTimeout(listeningTimeoutRef.current)
+      setAiMessage("Ready for your next amazing language adventure! 🌟")
     }
-    setIsListening(false)
-    clearCountdown()
   }
 
   const handleTextInput = () => {
@@ -203,18 +202,23 @@ export default function LanguageBuddy() {
     }
   }
 
-  const selectLanguage = (language: string) => {
+  const startLanguageLesson = (language: string, lessonType: string) => {
     setSelectedLanguage(language)
-    setLearningState('mode_select')
-    setAiMessage(`¡Excelente! Great choice! Let's learn ${language}! 🎉 What would you like to do - translate words, learn vocabulary, practice pronunciation, or have a simple conversation?`)
+    setSelectedLessonType(lessonType)
+    setConversationState('processing')
+    setAiMessage(`¡Fantástico! 🎉 Let me prepare an AMAZING ${language} ${lessonType} lesson for you! This is going to be so much fun! ✨`)
+    handleLanguageInput(`start ${lessonType} in ${language}`)
   }
 
-  const selectMode = async (mode: string, action: string) => {
-    setSelectedMode(mode)
-    setLearningState('processing')
-    setError(null)
-    setAiMessage("Setting up your language lesson... 📚")
+  const handleLanguageInput = async (input: string) => {
+    console.log("Language input:", input)
+    setConversationState('processing')
+    setIsProcessing(true)
     clearCountdown()
+    
+    // Set default language if none selected
+    const languageToUse = selectedLanguage || 'spanish'
+    const lessonTypeToUse = selectedLessonType || 'vocabulary'
     
     try {
       const response = await fetch('/api/learn-language', {
@@ -223,9 +227,9 @@ export default function LanguageBuddy() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          action: action,
-          targetLanguage: selectedLanguage,
-          learningMode: mode,
+          input: input,
+          language: languageToUse,
+          lessonType: lessonTypeToUse,
         }),
       })
 
@@ -233,108 +237,52 @@ export default function LanguageBuddy() {
 
       if (data.success) {
         setCurrentResponse(data)
-        setLearningState('response_ready')
-        if (action === 'teach_words') {
-          setWordsLearned(wordsLearned + 1)
-        } else if (action === 'conversation_practice') {
-          setConversationsCount(conversationsCount + 1)
-        }
-        setAiMessage("Your lesson is ready! 🌟 Listen and then try it yourself!")
+        setConversationState('lesson_ready')
+        setLanguagesLearned(prev => prev + 1)
+        setAiMessage("🎉 YOUR LANGUAGE LESSON IS READY! 🎉 Listen to learn something amazing, or ask me to teach you more cool words! 🌟")
+        
+        // Track usage - estimate varies based on lesson type
+        const estimatedMinutes = selectedLessonType === 'conversation' ? 15 : 8
+        UserPreferencesManager.trackUsage('Language Mode', estimatedMinutes)
       } else {
-        setError(data.error || 'Failed to start lesson')
-        setLearningState('mode_select')
-        setAiMessage("Hmm, I had trouble with that lesson. Let's try a different activity! 🤔")
+        setError(data.error || 'Hmm, I had trouble with that language lesson, but that\'s okay!')
+        setConversationState('learning')
+        setAiMessage("Oops! I had a little trouble with that lesson. Can you try asking for something different? I'm super excited to teach you languages! 😊🌈")
       }
+      setIsProcessing(false)
     } catch (err) {
-      setError('Something went wrong. Please try another lesson!')
-      setLearningState('mode_select')
-      setAiMessage("Oops! Something went wrong. What would you like to learn? 😊")
+      setError('Something went wrong, but let\'s keep learning!')
+      setConversationState('learning')
+      setAiMessage("No worries! Sometimes things get a little mixed up. What other amazing language would you like to learn? 🌟")
+      setIsProcessing(false)
       console.error('Error:', err)
     }
   }
 
-  const handleLanguageInput = async (userInput: string) => {
-    console.log("Language input received:", userInput)
-    setLearningState('processing')
-    setAiMessage("Processing your input... 🤔")
-    clearCountdown()
-    
-    let action = 'translate' // default
-    if (selectedMode === 'conversation') {
-      action = 'conversation_practice'
-    } else if (selectedMode === 'pronunciation') {
-      action = 'pronunciation_help'
-    }
-    
-    try {
-      const response = await fetch('/api/learn-language', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: action,
-          targetLanguage: selectedLanguage,
-          inputText: userInput,
-          learningMode: selectedMode,
-        }),
-      })
-
-      const data: LanguageResponse = await response.json()
-
-      if (data.success) {
-        setCurrentResponse(data)
-        setLearningState('response_ready')
-        setAiMessage("Great job! 🌟 Listen to my response and keep practicing!")
-      } else {
-        setError(data.error || 'Failed to process your input')
-        setLearningState('learning')
-        setAiMessage("I didn't catch that. Can you try again? 🎤")
-      }
-    } catch (err) {
-      setError('Something went wrong. Please try again!')
-      setLearningState('learning')
-      setAiMessage("Oops! Can you repeat that? 😊")
-      console.error('Error:', err)
-    }
-  }
-
-  const continueLesson = () => {
-    setLearningState('learning')
-    setCurrentResponse(null)
-    setError(null)
-    setTranscript("")
-    setInterimTranscript("")
-    setAiMessage(`Great work! Now ${selectedMode === 'conversation' ? 'continue our conversation' : selectedMode === 'pronunciation' ? 'try another word' : 'ask me to translate something else'}! I'm listening! 👂`)
-  }
-
-  const backToModes = () => {
+  const resetConversation = () => {
     stopListening()
-    setLearningState('mode_select')
-    setCurrentResponse(null)
-    setError(null)
-    setTranscript("")
-    setInterimTranscript("")
-    setTextInput("")
-    setSelectedMode("")
-    setShowTextInput(false)
-    restartAttempts.current = 0
-    setAiMessage(`What would you like to do next in ${selectedLanguage}? Pick another learning activity! 🎯`)
-  }
-
-  const backToLanguages = () => {
-    stopListening()
-    setLearningState('language_select')
+    setConversationState('menu')
     setCurrentResponse(null)
     setError(null)
     setTranscript("")
     setInterimTranscript("")
     setTextInput("")
     setSelectedLanguage("")
-    setSelectedMode("")
+    setSelectedLessonType("")
     setShowTextInput(false)
+    setIsProcessing(false)
     restartAttempts.current = 0
-    setAiMessage("Which language should we explore next? I love teaching new languages! 🌍")
+    setAiMessage("What other incredible language would you like to explore today? I LOVE teaching amazing kids like you new languages! 🌍✨")
+  }
+
+  const continueLesson = () => {
+    setConversationState('learning')
+    setCurrentResponse(null)
+    setError(null)
+    setTranscript("")
+    setInterimTranscript("")
+    setTextInput("")
+    setAiMessage("What else would you like to learn? Ask me for words, phrases, or anything about languages! 🎉")
   }
 
   const toggleInputMode = () => {
@@ -342,316 +290,298 @@ export default function LanguageBuddy() {
     setShowTextInput(!showTextInput)
     setError(null)
     if (!showTextInput) {
-      setAiMessage("Type what you want to learn! I'm excited to help! ⌨️")
+      setAiMessage("Perfect! Type what you want to learn here! I can't wait to teach you something super cool! ⌨️🌟")
     } else {
-      setAiMessage("Press the microphone to speak! 🎤")
+      setAiMessage("Great! Press the BIG microphone button and tell me what you want to learn! 🎤✨")
     }
   }
 
   const languages = [
-    { code: "spanish", name: "Spanish", flag: "🇪🇸", color: "from-red-400 to-yellow-400" },
-    { code: "french", name: "French", flag: "🇫🇷", color: "from-blue-400 to-red-400" },
-    { code: "german", name: "German", flag: "🇩🇪", color: "from-red-400 to-yellow-300" },
-    { code: "chinese", name: "Chinese", flag: "🇨🇳", color: "from-red-500 to-yellow-500" },
-    { code: "italian", name: "Italian", flag: "🇮🇹", color: "from-green-400 to-red-400" },
-    { code: "japanese", name: "Japanese", flag: "🇯🇵", color: "from-red-500 to-white" },
+    { 
+      name: "Spanish", 
+      emoji: "🇪🇸", 
+      greeting: "¡Hola!",
+      color: "from-red-400 to-yellow-400"
+    },
+    { 
+      name: "French", 
+      emoji: "🇫🇷", 
+      greeting: "Bonjour!",
+      color: "from-blue-400 to-white to-red-400"
+    },
+    { 
+      name: "Italian", 
+      emoji: "🇮🇹", 
+      greeting: "Ciao!",
+      color: "from-green-400 to-white to-red-400"
+    },
+    { 
+      name: "German", 
+      emoji: "🇩🇪", 
+      greeting: "Hallo!",
+      color: "from-black to-red-400 to-yellow-400"
+    },
+    { 
+      name: "Japanese", 
+      emoji: "🇯🇵", 
+      greeting: "Konnichiwa!",
+      color: "from-red-500 to-white"
+    },
+    { 
+      name: "Mandarin", 
+      emoji: "🇨🇳", 
+      greeting: "Nǐ hǎo!",
+      color: "from-red-500 to-yellow-400"
+    }
   ]
 
-  const learningModes = [
-    { 
-      id: "translate", 
-      name: "Translator", 
-      icon: "🌍", 
-      description: "Translate words and phrases!",
-      action: "translate",
-      color: "from-blue-400 to-cyan-400"
-    },
-    { 
-      id: "vocabulary", 
-      name: "Vocabulary", 
-      icon: "📚", 
-      description: "Learn new words and phrases!",
-      action: "teach_words",
-      color: "from-green-400 to-emerald-400"
-    },
-    { 
-      id: "pronunciation", 
-      name: "Pronunciation", 
-      icon: "🗣️", 
-      description: "Practice how to say words!",
-      action: "pronunciation_help",
-      color: "from-purple-400 to-pink-400"
-    },
-    { 
-      id: "conversation", 
-      name: "Chat Practice", 
-      icon: "💬", 
-      description: "Simple conversations!",
-      action: "conversation_practice",
-      color: "from-orange-400 to-red-400"
-    },
+  const lessonTypes = [
+    { type: "vocabulary", name: "Fun Words", emoji: "📝", description: "Learn cool new words!" },
+    { type: "phrases", name: "Useful Phrases", emoji: "💬", description: "Say amazing things!" },
+    { type: "conversation", name: "Chat Practice", emoji: "🗣️", description: "Talk like a local!" },
+    { type: "pronunciation", name: "Sound Perfect", emoji: "🎵", description: "Speak beautifully!" }
   ]
 
   return (
-    <div className="min-h-screen px-4 py-8 bg-gradient-to-br from-orange-100 via-red-50 to-purple-100">
-      <div className="max-w-4xl mx-auto">
-        {/* Friendly Header */}
-        <div className="text-center mb-8">
-          <div className="w-32 h-32 bg-gradient-to-r from-orange-400 to-red-400 rounded-full flex items-center justify-center mx-auto mb-6 float-animation shadow-lg">
-            <span className="text-6xl">🌍</span>
+    <div className="min-h-screen px-4 py-8 bg-gradient-to-br from-blue-100 via-green-50 to-yellow-100">
+      <div className="max-w-5xl mx-auto">
+        {/* Super Friendly Header */}
+        <div className="text-center mb-12">
+          <div className="w-40 h-40 bg-gradient-to-r from-blue-400 to-green-400 rounded-full flex items-center justify-center mx-auto mb-8 float-animation shadow-2xl">
+            <span className="text-8xl">🌍</span>
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-purple-800 mb-4">Language Buddy!</h1>
-          
-          {/* Progress Display */}
-          <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-4 max-w-md mx-auto shadow-lg border-2 border-orange-200">
-            <div className="flex items-center justify-center space-x-6">
-              <div className="flex items-center space-x-2">
-                <BookOpen className="w-6 h-6 text-orange-500" />
-                <span className="font-bold text-purple-800">Words: {wordsLearned}</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <MessageCircle className="w-6 h-6 text-red-500" />
-                <span className="font-bold text-purple-800">Chats: {conversationsCount}</span>
-              </div>
-            </div>
-          </div>
+          <h1 className="text-5xl md:text-7xl font-black text-purple-800 mb-6 rainbow-text">
+            Language Fun! 🗣️
+          </h1>
+        </div>
+
+        {/* Kid Achievements System */}
+        <div className="mb-12">
+          <KidAchievements 
+            mode="Language Mode"
+            currentStats={{
+              languagesLearned: languagesLearned
+            }}
+          />
         </div>
 
         {/* AI Language Teacher Speech Bubble */}
-        <div className="mb-8">
-          <div className="bg-gradient-to-r from-orange-400 to-red-400 text-white rounded-3xl rounded-bl-lg p-6 max-w-2xl mx-auto shadow-lg">
-            <div className="flex items-center mb-3">
-              <span className="text-3xl mr-3">👨‍🏫</span>
-              <span className="font-bold text-xl">Professor Polyglot</span>
+        <div className="mb-12">
+          <div className="bg-gradient-to-r from-blue-400 to-green-400 text-white rounded-3xl rounded-bl-lg p-8 max-w-4xl mx-auto shadow-2xl border-4 border-white/30">
+            <div className="flex items-center mb-6">
+              <span className="text-6xl mr-6 bounce-animation">🌍</span>
+              <span className="font-black text-3xl">Teacher MurfKiddo</span>
             </div>
-            <p className="text-lg leading-relaxed">{aiMessage}</p>
+            <p className="text-2xl leading-relaxed font-bold">{aiMessage}</p>
           </div>
         </div>
 
-        {/* Language Selection */}
-        {learningState === 'language_select' && (
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-purple-800 text-center mb-6">
-              <Globe className="inline w-8 h-8 mr-2 text-orange-600" />
-              Choose Your Language Adventure!
+        {/* Error Message - Kid Friendly */}
+        {error && (
+          <div className="kid-error mb-8 max-w-2xl mx-auto">
+            <div className="flex items-center mb-4">
+              <span className="text-4xl mr-4">😊</span>
+              <span className="text-2xl font-black">No Problem!</span>
+            </div>
+            <p className="text-xl font-bold">{error}</p>
+          </div>
+        )}
+
+        {/* Language Selection Menu */}
+        {conversationState === 'menu' && (
+          <div className="space-y-12">
+            <h2 className="text-3xl font-black text-purple-800 text-center mb-8">
+              <Globe className="inline w-10 h-10 mr-3 text-blue-500 bounce-animation" />
+              Pick Your Amazing Language! 🌟
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {languages.map((language) => (
-                <button
-                  key={language.code}
-                  onClick={() => selectLanguage(language.code)}
-                  className={`bg-gradient-to-r ${language.color} hover:shadow-xl transform hover:scale-105 text-white rounded-3xl p-6 transition-all duration-200 shadow-lg`}
-                >
-                  <div className="text-4xl mb-3">{language.flag}</div>
-                  <h3 className="font-bold text-xl mb-2">{language.name}</h3>
-                  <p className="text-sm opacity-90">¡Vamos a aprender!</p>
-                </button>
+              {languages.map((language, index) => (
+                <div key={index} className="bg-white/90 rounded-3xl p-8 shadow-lg border-4 border-white/70 text-center">
+                  <div className="text-6xl mb-4 bounce-animation">{language.emoji}</div>
+                  <h3 className="text-2xl font-black text-purple-800 mb-3">{language.name}</h3>
+                  <p className="text-xl text-purple-600 font-bold mb-6">{language.greeting}</p>
+                  
+                  <div className="space-y-3">
+                    {lessonTypes.map((lesson, lessonIndex) => (
+                      <button
+                        key={lessonIndex}
+                        onClick={() => startLanguageLesson(language.name, lesson.type)}
+                        className="w-full bg-gradient-to-r from-blue-400 to-green-400 text-white px-4 py-3 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all flex items-center justify-center space-x-2"
+                      >
+                        <span className="text-2xl">{lesson.emoji}</span>
+                        <span>{lesson.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Learning Mode Selection */}
-        {learningState === 'mode_select' && (
-          <div className="mb-8">
-            <div className="text-center mb-6">
-              <h2 className="text-2xl font-bold text-purple-800 mb-2">
-                Learning {languages.find(l => l.code === selectedLanguage)?.name} {languages.find(l => l.code === selectedLanguage)?.flag}
-              </h2>
-              <p className="text-purple-600">What would you like to practice?</p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {learningModes.map((mode) => (
-                <button
-                  key={mode.id}
-                  onClick={() => selectMode(mode.id, mode.action)}
-                  className={`bg-gradient-to-r ${mode.color} hover:shadow-xl transform hover:scale-105 text-white rounded-3xl p-6 transition-all duration-200 shadow-lg`}
-                >
-                  <div className="text-4xl mb-3">{mode.icon}</div>
-                  <h3 className="font-bold text-xl mb-2">{mode.name}</h3>
-                  <p className="text-sm opacity-90">{mode.description}</p>
-                </button>
-              ))}
-            </div>
-            <div className="text-center mt-6">
-              <button 
-                onClick={backToLanguages}
-                className="text-purple-600 hover:text-purple-800 underline"
-              >
-                ← Choose Different Language
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Input Mode Toggle */}
-        {learningState === 'learning' && (
-          <div className="text-center mb-4">
+        {/* Input Mode Toggle - During Learning */}
+        {(conversationState === 'learning' || conversationState === 'lesson_ready') && (
+          <div className="text-center mb-8">
             <button
               onClick={toggleInputMode}
-              className="bg-gradient-to-r from-indigo-400 to-purple-400 text-white px-6 py-2 rounded-full font-medium hover:shadow-lg transition-all flex items-center space-x-2 mx-auto"
+              className="kid-toggle"
             >
-              {showTextInput ? <Mic className="w-4 h-4" /> : <Keyboard className="w-4 h-4" />}
-              <span>{showTextInput ? "Switch to Voice" : "Switch to Typing"}</span>
+              {showTextInput ? <Mic className="w-8 h-8" /> : <Keyboard className="w-8 h-8" />}
+              <span className="text-xl font-black">
+                {showTextInput ? "🎤 Switch to Voice!" : "⌨️ Switch to Typing!"}
+              </span>
             </button>
           </div>
         )}
 
-        {/* Voice Input Section */}
-        {learningState === 'learning' && !showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-orange-200">
+        {/* Voice Input Section - Much Bigger */}
+        {conversationState === 'learning' && !showTextInput && (
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              {/* Giant Microphone Button */}
               <button
                 onClick={isListening ? stopListening : startListening}
-                className={`w-32 h-32 mx-auto mb-6 rounded-full flex items-center justify-center text-white font-bold text-2xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 ${
+                disabled={isProcessing}
+                className={`kid-mic-button mx-auto mb-8 disabled:opacity-50 disabled:cursor-not-allowed ${
                   isListening 
-                    ? 'bg-gradient-to-r from-red-400 to-pink-500 animate-pulse' 
-                    : 'bg-gradient-to-r from-orange-400 to-red-400'
+                    ? 'bg-gradient-to-r from-red-400 to-pink-500 pulse-animation' 
+                    : 'bg-gradient-to-r from-blue-400 to-green-400 wiggle-animation'
                 }`}
               >
-                {isListening ? <MicOff className="w-16 h-16" /> : <Mic className="w-16 h-16" />}
+                {isListening ? <MicOff className="w-24 h-24" /> : <Mic className="w-24 h-24" />}
               </button>
-              
+
+              {/* Listening Status - Kid Friendly */}
               {isListening && (
-                <div className="mb-4">
-                  <div className="text-2xl font-bold text-orange-600 mb-2">
-                    🎤 Listening... {listeningCountdown}s
-                  </div>
-                  <div className="bg-orange-100 rounded-2xl p-3">
-                    <p className="text-orange-700 font-medium">
-                      {selectedMode === 'conversation' ? 'Say something in the language!' : 
-                       selectedMode === 'pronunciation' ? 'Tell me a word to practice!' :
-                       'What would you like to translate?'}
+                <div className="mb-6">
+                  <div className="bg-gradient-to-r from-green-200 to-blue-200 rounded-3xl p-6 shadow-lg">
+                    <p className="text-2xl font-black text-green-800 mb-4">
+                      🎧 I'm Listening for What You Want to Learn! ({listeningCountdown}s)
                     </p>
-                  </div>
+                    <div className="bg-white rounded-full h-6 overflow-hidden">
+                      <div 
+                        className="kid-progress h-full"
+                        style={{ width: `${(listeningCountdown / 20) * 100}%` }}
+                      />
+                    </div>
+          </div>
+        </div>
+              )}
+
+              {/* What the kid is saying */}
+              {(transcript || interimTranscript) && (
+                <div className="bg-gradient-to-r from-blue-200 to-purple-200 rounded-3xl p-6 mb-6 shadow-lg border-4 border-blue-300">
+                  <p className="text-xl font-black text-blue-800 mb-2">
+                    🗣️ You Want to Learn:
+                  </p>
+                  <p className="text-2xl font-bold text-blue-900">
+                    "{transcript || interimTranscript}"
+                  </p>
                 </div>
               )}
               
-              <p className="text-lg text-purple-700 font-medium mb-4">
-                {isListening ? "🗣️ I'm listening!" : "👆 Press to start!"}
+              <p className="text-xl text-purple-600 font-bold">
+                💡 Try: "Teach me colors in Spanish" or "How do I say hello?"
               </p>
-              
-              {interimTranscript && (
-                <div className="bg-yellow-50 rounded-2xl p-4 mb-4">
-                  <p className="text-yellow-800">
-                    <span className="font-bold">I'm hearing:</span> "{interimTranscript}..."
-                  </p>
-                </div>
-              )}
-              
-              {transcript && (
-                <div className="bg-blue-50 rounded-2xl p-4 mb-4">
-                  <p className="text-blue-800">
-                    <span className="font-bold">You said:</span> "{transcript}"
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         )}
 
-        {/* Text Input Section */}
-        {learningState === 'learning' && showTextInput && (
-          <div className="text-center mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-orange-200">
-              <div className="flex items-center space-x-4 max-w-lg mx-auto">
-                <input
-                  type="text"
+        {/* Text Input Section - Much Bigger */}
+        {conversationState === 'learning' && showTextInput && (
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-3xl mx-auto">
+              <div className="flex flex-col space-y-6">
+            <input
+              type="text"
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleTextInput()}
-                  placeholder={
-                    selectedMode === 'conversation' ? 'Say hello in the language!' :
-                    selectedMode === 'pronunciation' ? 'Type a word to practice...' :
-                    'What do you want to translate?'
-                  }
-                  className="flex-1 px-6 py-4 text-lg rounded-2xl border-2 border-orange-200 focus:border-orange-400 focus:outline-none"
+                  placeholder="What do you want to learn in this language?"
+                  className="kid-input"
+                  disabled={isProcessing}
                 />
                 <button
                   onClick={handleTextInput}
-                  disabled={!textInput.trim()}
-                  className="bg-gradient-to-r from-orange-400 to-red-400 text-white px-6 py-4 rounded-2xl font-bold hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  disabled={!textInput.trim() || isProcessing}
+                  className="kid-button mx-auto"
                 >
-                  <Brain className="w-6 h-6" />
+                  <Brain className="w-8 h-8 mr-4" />
+                  Teach Me! 🌟
                 </button>
               </div>
+              <p className="text-xl text-purple-600 font-bold mt-6">
+                💡 Try: "Numbers in French" or "How to order food"
+              </p>
             </div>
           </div>
         )}
 
-        {/* Loading State */}
-        {learningState === 'processing' && (
-          <div className="text-center mb-8">
-            <LoadingSpinner />
-            <p className="text-purple-600 mt-4 text-lg font-medium">
-              🌍 Preparing your language lesson... ✨
-            </p>
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && (
-          <div className="bg-red-100 border-2 border-red-300 rounded-3xl p-6 mb-8">
-            <div className="text-center">
-              <span className="text-4xl mb-2 block">😔</span>
-              <p className="text-red-700 font-semibold text-lg">{error}</p>
-              <div className="mt-4 space-x-4">
-                <button 
-                  onClick={() => setError(null)}
-                  className="bg-gradient-to-r from-orange-400 to-red-400 text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all"
-                >
-                  Keep Learning
-                </button>
-                {!showTextInput && learningState === 'learning' && (
-                  <button 
-                    onClick={toggleInputMode}
-                    className="bg-gradient-to-r from-blue-400 to-cyan-400 text-white px-6 py-3 rounded-full font-bold hover:shadow-lg transition-all"
-                  >
-                    Type Instead
-                  </button>
-                )}
-              </div>
+        {/* Loading State - Fun for Kids */}
+        {conversationState === 'processing' && (
+          <div className="text-center mb-12">
+            <div className="kid-message-box max-w-2xl mx-auto">
+              <div className="text-8xl mb-6 kid-loading">🌍</div>
+              <p className="text-3xl font-black text-purple-600 mb-4">
+                ✨ Preparing Your Language Lesson! ✨
+              </p>
+              <p className="text-xl font-bold text-purple-500">
+                🔍 Finding the perfect words... 💫 Making it super fun to learn... 🎉 Almost ready!
+              </p>
+              <LoadingSpinner />
             </div>
           </div>
         )}
 
-        {/* Language Response Display */}
-        {currentResponse && learningState === 'response_ready' && (
-          <div className="space-y-6 mb-8">
-            <div className="bg-white/80 backdrop-blur-sm rounded-3xl p-8 shadow-lg border-2 border-orange-200">
-              <div className="text-center mb-6">
-                <h2 className="text-3xl font-bold text-purple-800 mb-4">🌟 Your Language Lesson! 🌟</h2>
-                <div className="bg-gradient-to-r from-orange-100 to-red-100 rounded-2xl p-4 mb-6">
-                  <h3 className="text-lg font-semibold text-orange-800 mb-2">
-                    {languages.find(l => l.code === selectedLanguage)?.name} {currentResponse.action === 'translate' ? 'Translation' : currentResponse.action === 'teach_words' ? 'Vocabulary' : currentResponse.action === 'pronunciation_help' ? 'Pronunciation' : 'Conversation'}
-                  </h3>
-                </div>
+        {/* Language Lesson Ready - Celebration */}
+        {conversationState === 'lesson_ready' && currentResponse && (
+          <div className="space-y-8">
+            {/* Celebration Header */}
+          <div className="text-center">
+              <div className="kid-success max-w-3xl mx-auto">
+                <div className="text-6xl mb-4 bounce-animation">🌟</div>
+                <h2 className="text-4xl font-black text-green-800 mb-4">
+                  YOUR LESSON IS READY! 
+                </h2>
+                <p className="text-2xl font-bold text-green-700">
+                  You're going to learn something AMAZING! 🌍
+                </p>
               </div>
+            </div>
 
-              {/* Response Text */}
-              <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-2xl p-6 mb-6 max-h-64 overflow-y-auto">
-                <p className="text-gray-700 leading-relaxed text-lg whitespace-pre-line">{currentResponse.responseText}</p>
-              </div>
-
+            {/* Audio Player */}
+            <div className="max-w-4xl mx-auto">
               <AudioPlayer 
-                title={`${languages.find(l => l.code === selectedLanguage)?.name} Lesson`}
-                audioUrl={currentResponse.audioUrl}
+                audioUrl={currentResponse.audioUrl} 
+                title={`Learning: ${currentResponse.language} - ${currentResponse.lessonType}`}
+                autoPlay={true}
               />
-              
-              <div className="text-center mt-6 space-x-4">
-                <button 
-                  onClick={continueLesson}
-                  className="bg-gradient-to-r from-green-400 to-emerald-400 text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all"
-                >
-                  Continue Learning! 📚
-                </button>
-                <button 
-                  onClick={backToModes}
-                  className="bg-gradient-to-r from-purple-400 to-pink-400 text-white px-8 py-4 rounded-full font-bold text-lg hover:shadow-lg transform hover:scale-105 transition-all"
-                >
-                  New Activity! 🎯
-                </button>
+            </div>
+
+            {/* Language Lesson Display */}
+            <div className="kid-message-box max-w-4xl mx-auto">
+              <h3 className="text-3xl font-black text-purple-800 mb-6">🌍 {currentResponse.language} - {currentResponse.lessonType}</h3>
+              <div className="text-xl leading-relaxed text-purple-700 font-semibold">
+                {currentResponse.responseText}
               </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="text-center space-y-6">
+              <button
+                onClick={continueLesson}
+                className="kid-button mr-4"
+              >
+                <Star className="w-8 h-8 mr-4" />
+                Learn More! 🌟
+              </button>
+              <button
+                onClick={resetConversation}
+                className="kid-button"
+              >
+                <Globe className="w-8 h-8 mr-4" />
+                New Language! 🌍
+              </button>
             </div>
           </div>
         )}
