@@ -1,5 +1,8 @@
+"use client"
+
 import Link from "next/link"
-import { BookOpen, Brain, Gamepad2, Globe, Moon, MessageCircle, Mic, Zap, Star } from "lucide-react"
+import Image from "next/image"
+import { BookOpen, Brain, Gamepad2, Globe, Moon } from "lucide-react"
 
 export default function ExplorePage() {
   const modes = [
@@ -57,7 +60,13 @@ export default function ExplorePage() {
         <div className="text-center mb-16">
           <div className="mb-8">
             <div className="w-40 h-40 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-6 float-animation shadow-2xl">
-              <span className="text-8xl">🎤</span>
+              <Image
+                src="/murfkiddo.png"
+                alt="MurfKiddo Logo"
+                width={120}
+                height={120}
+                className="rounded-full"
+              />
             </div>
             <h1 className="text-6xl md:text-8xl font-black rainbow-text mb-6">
               MurfKiddo
@@ -74,39 +83,7 @@ export default function ExplorePage() {
           </div>
         </div>
 
-        {/* Big Friendly Chat Button */}
-        <div className="mb-16">
-          <Link href="/chat">
-            <div className="bg-gradient-to-r from-purple-500 via-pink-500 to-orange-400 rounded-3xl p-12 shadow-2xl border-4 border-white/30 text-center group cursor-pointer chat-card">
-              <div className="w-32 h-32 mx-auto mb-8 p-6 rounded-full bg-white/20 bounce-animation">
-                <MessageCircle className="w-20 h-20 text-white" />
-              </div>
-              <h2 className="text-4xl md:text-5xl font-black text-white mb-6">💬 Chat with Me!</h2>
-              <p className="text-white text-2xl md:text-3xl mb-8 font-bold">
-                Talk to me RIGHT NOW! I'll answer with my voice! 🗣️
-              </p>
-              
-              {/* Fun Features for Kids */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-white">
-                <div className="bg-white/20 backdrop-blur-sm rounded-2xl p-6">
-                  <Mic className="w-12 h-12 mx-auto mb-3" />
-                  <p className="text-xl font-bold">Talk to Me!</p>
-                  <p className="text-lg">Use your voice!</p>
-                </div>
-                <div className="bg-white/20 backdrop-blur-sm rounded-2xl p-6">
-                  <Zap className="w-12 h-12 mx-auto mb-3" />
-                  <p className="text-xl font-bold">Super Fast!</p>
-                  <p className="text-lg">I answer quickly!</p>
-                </div>
-                <div className="bg-white/20 backdrop-blur-sm rounded-2xl p-6">
-                  <Star className="w-12 h-12 mx-auto mb-3" />
-                  <p className="text-xl font-bold">So Much Fun!</p>
-                  <p className="text-lg">We'll have a blast!</p>
-                </div>
-              </div>
-            </div>
-          </Link>
-        </div>
+
 
         {/* Big Mode Selection Cards */}
         <div className="mb-16">

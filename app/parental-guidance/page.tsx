@@ -248,7 +248,7 @@ export default function ParentalGuidance() {
     }
   }
 
-  const allModes = ['Story Mode', 'Tutor Mode', 'Play Mode', 'Language Mode', 'Bedtime Mode', 'Chat Mode']
+  const allModes = ['Story Mode', 'Tutor Mode', 'Play Mode', 'Language Mode', 'Bedtime Mode']
 
   if (isLoading) {
     return (

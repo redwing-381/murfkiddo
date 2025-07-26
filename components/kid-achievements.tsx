@@ -21,7 +21,6 @@ interface KidAchievementsProps {
     gamesPlayed?: number
     languagesLearned?: number
     bedtimeStories?: number
-    chatMessages?: number
   }
 }
 
@@ -149,24 +148,7 @@ export default function KidAchievements({ mode, currentStats }: KidAchievementsP
           maxProgress: 5
         }
       ],
-      'Chat Mode': [
-        {
-          id: 'chat-buddy',
-          title: 'Chat Buddy! 💬',
-          description: 'Had your first conversation!',
-          emoji: '💬',
-          unlocked: (currentStats.chatMessages || 0) >= 1
-        },
-        {
-          id: 'conversation-master',
-          title: 'Conversation Master! 🎤',
-          description: 'Had 10 fun chats!',
-          emoji: '🎤',
-          unlocked: (currentStats.chatMessages || 0) >= 10,
-          progress: currentStats.chatMessages || 0,
-          maxProgress: 10
-        }
-      ]
+
     }
 
     return baseAchievements[mode] || []

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import React, { Suspense } from "react";
 import { Sparkles, ArrowRight } from "lucide-react";
 
@@ -45,7 +46,13 @@ export default function SimpleLandingPage() {
             {/* Simple Logo */}
             <div className="mb-8">
               <div className="w-24 h-24 md:w-32 md:h-32 bg-gradient-to-r from-purple-600/90 to-pink-600/90 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-6 float-animation shadow-2xl border-4 border-white/50">
-                <span className="text-4xl md:text-6xl drop-shadow-2xl">🎤</span>
+                <Image
+                  src="/murfkiddo.png"
+                  alt="MurfKiddo Logo"
+                  width={80}
+                  height={80}
+                  className="rounded-full drop-shadow-2xl"
+                />
               </div>
               
                              {/* Title with enhanced visibility */}

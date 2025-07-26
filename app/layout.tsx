@@ -9,7 +9,12 @@ const inter = Inter({ subsets: ["latin"] })
 export const metadata: Metadata = {
   title: "MurfKiddo - AI Voice Agent for Kids",
   description: "A safe, educational, and fun AI voice companion for children",
-    generator: 'v0.dev'
+  generator: 'v0.dev',
+  icons: {
+    icon: '/murfkiddo.png',
+    shortcut: '/murfkiddo.png',
+    apple: '/murfkiddo.png',
+  },
 }
 
 export default function RootLayout({
